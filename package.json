@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@config-plugins/react-native-ble-plx": "^7.0.0",
@@ -18,9 +19,11 @@
     "expo-build-properties": "~55.0.10",
     "expo-dev-client": "~55.0.18",
     "expo-status-bar": "~55.0.4",
+    "patch-package": "^8.0.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-native": "0.83.2",
+    "react-native-ble-advertiser": "^0.0.17",
     "react-native-ble-plx": "^3.5.1",
     "react-native-safe-area-context": "~5.6.2",
     "react-native-screens": "~4.23.0",
