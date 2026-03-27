@@ -1,9 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Button, PermissionsAndroid, Platform, TextInput, StyleSheet, Alert, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, Button, PermissionsAndroid, Platform, TextInput, StyleSheet, Alert, TouchableOpacity, ScrollView, Dimensions, StatusBar, KeyboardAvoidingView } from 'react-native';
 import BleAdvertiser from 'react-native-ble-advertiser';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import MeshGradient from '../components/MeshGradient';
+
+const { width, height } = Dimensions.get('window');
+
+const DotGrid = () => {
+  const dotSpacing = 35;
+  const cols = Math.ceil(width / dotSpacing) + 1;
+  const rows = Math.ceil(height / dotSpacing) + 1;
+  const dots = [];
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      dots.push(
+        <View key={`${i}-${j}`} style={{ position: 'absolute', width: 4, height: 4, borderRadius: 2, backgroundColor: '#94A3B8', opacity: 0.15, left: j * dotSpacing + (i % 2 === 0 ? 0 : dotSpacing / 2), top: i * dotSpacing }} />
+      );
+    }
+  }
+  return <View style={StyleSheet.absoluteFill}>{dots}</View>;
+};
 
 export default function TeacherDashboard({ route, navigation }) {
   const { phone } = route?.params || { phone: '9999999998' }; 
+  const insets = useSafeAreaInsets();
+  
   const [subjectName, setSubjectName] = useState('');
   const [department, setDepartment] = useState('');
   const [year, setYear] = useState('');
@@ -33,22 +55,21 @@ export default function TeacherDashboard({ route, navigation }) {
     setActiveInstanceId(inst._id);
     setSubjectName(inst.subjectName);
     setDepartment(inst.department);
-    setYear(inst.year || '');
-    setSemester(inst.semester);
+    setYear(inst.year?.toString() || '');
+    setSemester(inst.semester?.toString() || '');
     setSection(inst.section || '');
-    setClassroom(inst.classroom);
+    setClassroom(inst.classroom || '');
     setRollStart(inst.rollStart?.toString() || '');
     setRollEnd(inst.rollEnd?.toString() || '');
-    Alert.alert('Instance Selected', `Ready to start ${inst.subjectName}`);
+    Alert.alert('Preset Loaded ✅', `Ready to broadcast ${inst.subjectName}`);
   }
 
   async function saveInstance() {
     if (!subjectName || !department || !semester || !section || !year || !classroom || !rollStart || !rollEnd) {
-      Alert.alert('Error', 'Fill all fields.');
+      Alert.alert('Error', 'Please fill all class details.');
       return;
     }
     
-    // Android Polyfill: Alert.prompt silently fails on Android! Instantly generating smart preset name instead.
     const autoName = `${subjectName} - ${department} ${section} (Sem ${semester}, Room ${classroom})`;
     
     try {
@@ -60,8 +81,8 @@ export default function TeacherDashboard({ route, navigation }) {
             instanceName: autoName, 
             subjectName, 
             department, 
-            year, 
-            semester, 
+            year: parseInt(year), 
+            semester: parseInt(semester), 
             section,
             classroom, 
             rollStart: parseInt(rollStart), 
@@ -82,8 +103,16 @@ export default function TeacherDashboard({ route, navigation }) {
 
   async function startAttendance() {
     if (!subjectName || !department || !semester || !section || !year || !classroom || !rollStart || !rollEnd) {
-      Alert.alert('Error', 'All fields are required');
+      Alert.alert('Error', 'All fields are required to start a session.');
       return;
+    }
+
+    if (Platform.OS === 'android') {
+      const g = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE);
+      if (g !== PermissionsAndroid.RESULTS.GRANTED && Platform.Version >= 31) {
+        Alert.alert('Permissions Error', 'Teacher advertising requires Bluetooth permissions.');
+        return;
+      }
     }
 
     try {
@@ -91,17 +120,10 @@ export default function TeacherDashboard({ route, navigation }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          phone, 
-          subjectName, 
-          department, 
-          year, 
-          semester, 
-          section,
-          classroom, 
-          rollStart: parseInt(rollStart), 
-          rollEnd: parseInt(rollEnd),
-          classInstanceId: activeInstanceId,
-          broadcastId: CLASS_UUID 
+          phone, subjectName, department, 
+          year: parseInt(year), semester: parseInt(semester), section,
+          classroom, rollStart: parseInt(rollStart), rollEnd: parseInt(rollEnd),
+          classInstanceId: activeInstanceId, broadcastId: CLASS_UUID 
         })
       });
       const data = await response.json();
@@ -109,23 +131,19 @@ export default function TeacherDashboard({ route, navigation }) {
 
       setActiveSessionId(data._id);
       setIsLive(true);
-      setStatusText(`LIVE: ${subjectName}`);
+      setStatusText(`LIVE: ${subjectName} (${section})`);
 
       BleAdvertiser.setCompanyId(0xFF); 
-      await BleAdvertiser.broadcast(CLASS_UUID, [data.hardwareMajor, 1], {});
+      await BleAdvertiser.broadcast(CLASS_UUID, [data.hardwareMajor || 12, 1], {});
 
-      // Start 10-minute Heartbeat Reminder Failsafe
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
-        Alert.alert(
-          'Class Still Running? ⏱️',
-          'Your class has been broadcasting for 10 minutes. Do you want to end the session or keep attendance open?',
-          [
+        Alert.alert('Class Still Running? ⏱️', 'Your class has been broadcasting for 10 minutes.', [
             { text: 'Keep Going', style: 'cancel' },
             { text: 'Stop Broadcast', onPress: endAttendance, style: 'destructive' }
           ]
         );
-      }, 10 * 60 * 1000); // 600,000 milliseconds = 10 minutes
+      }, 10 * 60 * 1000); 
 
     } catch (err) {
       Alert.alert('Hardware Error', 'Ensure Bluetooth is ON.');
@@ -141,101 +159,145 @@ export default function TeacherDashboard({ route, navigation }) {
     setStatusText('Off-Air');
     setActiveSessionId(null);
     if (timerRef.current) clearTimeout(timerRef.current);
-    Alert.alert('Attendance Completed', 'The session is closed.');
+    Alert.alert('Attendance Completed', 'The session is closed and synchronized.');
   }
 
-  useEffect(() => {
-    fetchInstances();
-  }, []);
+  useEffect(() => { fetchInstances(); }, []);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Professor Control</Text>
-      <View style={[styles.banner, { backgroundColor: isLive ? '#34C759' : '#007AFF' }]}>
-        <Text style={styles.bannerText}>{statusText}</Text>
-      </View>
-
-      {!isLive ? (
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <Text style={styles.label}>Class Details</Text>
-          <TextInput style={styles.input} value={subjectName} onChangeText={setSubjectName} placeholder="Subject Name" placeholderTextColor="#8E8E93"/>
-          
-          <View style={{flexDirection:'row', gap:10}}>
-             <TextInput style={[styles.input, {flex:1}]} value={department} onChangeText={setDepartment} placeholder="Dept" placeholderTextColor="#8E8E93"/>
-             <TextInput style={[styles.input, {flex:1}]} value={section} onChangeText={setSection} placeholder="Sec (A)" autoCapitalize="characters" maxLength={1} placeholderTextColor="#8E8E93"/>
-             <TextInput style={[styles.input, {flex:1}]} value={semester} onChangeText={setSemester} placeholder="Sem" placeholderTextColor="#8E8E93"/>
+      <MeshGradient />
+      <DotGrid />
+      <StatusBar barStyle="dark-content" />
+      
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <View style={[styles.headerSection, { paddingTop: insets.top + 20 }]}>
+          <Text style={styles.header}>Professor Control</Text>
+          <View style={[styles.banner, { backgroundColor: isLive ? '#10B981' : '#0F172A' }]}>
+             <MaterialCommunityIcons name={isLive ? "broadcast" : "broadcast-off"} size={24} color="#FFF" style={{marginRight: 10}} />
+            <Text style={styles.bannerText}>{statusText}</Text>
           </View>
-
-          <View style={{flexDirection:'row', gap:10}}>
-             <TextInput style={[styles.input, {flex:1}]} value={year} onChangeText={setYear} placeholder="Year" keyboardType="numeric" maxLength={4} placeholderTextColor="#8E8E93"/>
-             <TextInput style={[styles.input, {flex:1}]} value={classroom} onChangeText={setClassroom} placeholder="Room" placeholderTextColor="#8E8E93"/>
-          </View>
-
-          <View style={{flexDirection:'row', gap:10}}>
-             <TextInput style={[styles.input, {flex:1}]} value={rollStart} onChangeText={setRollStart} placeholder="Roll From (001)" keyboardType="numeric" maxLength={3} placeholderTextColor="#8E8E93"/>
-             <TextInput style={[styles.input, {flex:1}]} value={rollEnd} onChangeText={setRollEnd} placeholder="Roll To (060)" keyboardType="numeric" maxLength={3} placeholderTextColor="#8E8E93"/>
-          </View>
-
-          <View style={{flexDirection:'row', gap:10, marginBottom: 20}}>
-            <TouchableOpacity style={styles.btnStart} onPress={startAttendance}><Text style={styles.btnTxt}>GO LIVE</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.btnSave} onPress={saveInstance}><Text style={styles.btnTxt}>SAVE PRESET</Text></TouchableOpacity>
-          </View>
-
-          <Text style={styles.label}>Quick Load Preset:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 25}}>
-            {savedInstances.map(i => (
-              <TouchableOpacity key={i._id} style={styles.preset} onPress={() => selectInstance(i)}>
-                <Text style={styles.pTitle} numberOfLines={1}>{i.instanceName}</Text>
-                <Text style={styles.pSub}>{i.subjectName}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          <Text style={styles.label}>Recent Class Reports:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 40}}>
-             {savedInstances.map(i => (
-               <TouchableOpacity 
-                 key={i._id} 
-                 style={styles.report} 
-                 onPress={() => navigation.navigate('ClassHistory', { 
-                   instanceId: i._id, 
-                   instanceName: i.instanceName 
-                 })}
-               >
-                 <Text style={styles.rTxt}>{i.instanceName}</Text>
-                 <Text style={styles.rSub}>View History</Text>
-               </TouchableOpacity>
-             ))}
-          </ScrollView>
-        </ScrollView>
-      ) : (
-        <View style={{ flex: 1, justifyContent: 'center' }}>
-           <Text style={styles.liveSubtitle}>Broadcasting Attendance Signal...</Text>
-           <TouchableOpacity style={styles.btnEnd} onPress={endAttendance}>
-             <Text style={styles.btnTxt}>STOP CLASS BROADCAST</Text>
-           </TouchableOpacity>
         </View>
-      )}
+
+        {!isLive ? (
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+            <View style={styles.bentoCard}>
+              <Text style={styles.label}>CLASS CONFIGURATION</Text>
+              
+              <View style={styles.inputContainer}>
+                <MaterialCommunityIcons name="book-open-outline" size={20} color="#64748B" style={styles.inputIcon} />
+                <TextInput style={styles.input} value={subjectName} onChangeText={setSubjectName} placeholder="Subject Name" placeholderTextColor="#8E8E93"/>
+              </View>
+
+              <View style={styles.row}>
+                <View style={[styles.inputContainer, {flex: 1}]}><TextInput style={styles.input} value={department} onChangeText={setDepartment} placeholder="Dept (CS)" placeholderTextColor="#8E8E93"/></View>
+                <View style={[styles.inputContainer, {width: 70}]}><TextInput style={styles.input} value={section} onChangeText={setSection} placeholder="Sec" autoCapitalize="characters" maxLength={1} placeholderTextColor="#8E8E93"/></View>
+                <View style={[styles.inputContainer, {width: 70}]}><TextInput style={styles.input} value={semester} onChangeText={setSemester} placeholder="Sem" keyboardType="numeric" maxLength={1} placeholderTextColor="#8E8E93"/></View>
+              </View>
+
+              <View style={styles.row}>
+                <View style={[styles.inputContainer, {flex: 1}]}><MaterialCommunityIcons name="calendar-outline" size={20} color="#64748B" style={styles.inputIcon}/><TextInput style={styles.input} value={year} onChangeText={setYear} placeholder="Year" keyboardType="numeric" maxLength={4} placeholderTextColor="#8E8E93"/></View>
+                <View style={[styles.inputContainer, {flex: 1}]}><MaterialCommunityIcons name="map-marker-outline" size={20} color="#64748B" style={styles.inputIcon}/><TextInput style={styles.input} value={classroom} onChangeText={setClassroom} placeholder="Room Code" placeholderTextColor="#8E8E93"/></View>
+              </View>
+
+              <View style={styles.row}>
+                <View style={[styles.inputContainer, {flex: 1}]}><MaterialCommunityIcons name="account-group-outline" size={20} color="#64748B" style={styles.inputIcon}/><TextInput style={styles.input} value={rollStart} onChangeText={setRollStart} placeholder="Roll From" keyboardType="numeric" maxLength={3} placeholderTextColor="#8E8E93"/></View>
+                <View style={[styles.inputContainer, {flex: 1}]}><MaterialCommunityIcons name="format-horizontal-align-right" size={20} color="#64748B" style={styles.inputIcon}/><TextInput style={styles.input} value={rollEnd} onChangeText={setRollEnd} placeholder="Roll To" keyboardType="numeric" maxLength={3} placeholderTextColor="#8E8E93"/></View>
+              </View>
+
+              <View style={styles.actionRow}>
+                <TouchableOpacity style={styles.btnStart} onPress={startAttendance} activeOpacity={0.8}>
+                  <Text style={styles.btnTxt}>GO LIVE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.btnSave} onPress={saveInstance} activeOpacity={0.8}>
+                  <MaterialCommunityIcons name="content-save" size={24} color="#0F172A" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <Text style={styles.sectionLabel}>QUICK LOAD PRESET</Text>
+            {savedInstances.length === 0 ? (
+               <Text style={styles.emptyText}>No presets saved yet.</Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
+                {savedInstances.map(i => (
+                  <TouchableOpacity key={i._id} style={styles.presetCard} onPress={() => selectInstance(i)} activeOpacity={0.8}>
+                    <MaterialCommunityIcons name="bookmark-multiple-outline" size={24} color="#10B981" />
+                    <View style={{marginTop: 8}}>
+                      <Text style={styles.pTitle} numberOfLines={1}>{i.instanceName}</Text>
+                      <Text style={styles.pSub}>{i.subjectName} • Sem {i.semester}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            <Text style={styles.sectionLabel}>CLASS REGISTRY REPORTS</Text>
+            {savedInstances.length === 0 ? (
+               <Text style={styles.emptyText}>No classes registered yet.</Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.hScroll, {marginBottom: 40}]}>
+                {savedInstances.map(i => (
+                  <TouchableOpacity 
+                    key={i._id} 
+                    style={[styles.presetCard, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]} 
+                    onPress={() => navigation.navigate('ClassHistory', { instanceId: i._id, instanceName: i.instanceName })}
+                    activeOpacity={0.8}
+                  >
+                    <MaterialCommunityIcons name="chart-box-outline" size={24} color="#3B82F6" />
+                    <View style={{marginTop: 8}}>
+                      <Text style={[styles.pTitle, {color: '#0F172A'}]} numberOfLines={2}>{i.instanceName}</Text>
+                      <Text style={styles.pSub}>View Attendance Report</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </ScrollView>
+        ) : (
+          <View style={styles.liveContainer}>
+             <Animated.View style={styles.livePulseRing}>
+                <MaterialCommunityIcons name="bluetooth-audio" size={80} color="#10B981" />
+             </Animated.View>
+             <Text style={styles.liveTitle}>Broadcasting via Bluetooth</Text>
+             <Text style={styles.liveSubtitle}>Students can now scan and verify their presence locally.</Text>
+             <TouchableOpacity style={styles.btnEnd} onPress={endAttendance}>
+               <MaterialCommunityIcons name="stop-circle-outline" size={24} color="#FFF" style={{marginRight: 8}}/>
+               <Text style={styles.btnTxt}>STOP CLASS BROADCAST</Text>
+             </TouchableOpacity>
+          </View>
+        )}
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 25, backgroundColor: '#F8F9FA', marginTop: 30 },
-  header: { fontSize: 26, fontWeight: '900', color: '#1C1C1E', marginBottom: 20 },
-  banner: { padding: 18, borderRadius: 12, marginBottom: 20, elevation: 3 },
-  bannerText: { color: '#fff', fontWeight: 'bold', textAlign: 'center', fontSize: 16 },
-  label: { fontSize: 13, fontWeight: '700', color: '#8E8E93', marginBottom: 8, marginTop: 10, textTransform: 'uppercase' },
-  input: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#E5E5EA', fontSize: 16 },
-  btnStart: { flex: 1.5, backgroundColor: '#34C759', padding: 18, borderRadius: 12, alignItems: 'center' },
-  btnSave: { flex: 1, backgroundColor: '#5856D6', padding: 18, borderRadius: 12, alignItems: 'center' },
-  btnEnd: { backgroundColor: '#FF3B30', padding: 25, borderRadius: 20, alignItems: 'center', elevation: 5 },
-  btnTxt: { color: '#fff', fontWeight: '900', fontSize: 16 },
-  preset: { backgroundColor: '#fff', padding: 15, borderRadius: 15, marginRight: 12, borderWidth: 1, borderColor: '#E5E5EA', width: 140 },
-  pTitle: { fontWeight: 'bold', color: '#007AFF', fontSize: 14 },
-  pSub: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
-  report: { backgroundColor: '#E5E5EA', padding: 15, borderRadius: 15, marginRight: 12, width: 140 },
-  rTxt: { fontWeight: '700', color: '#1C1C1E', fontSize: 14 },
-  rSub: { fontSize: 10, color: '#8E8E93', marginTop: 2 },
-  liveSubtitle: { textAlign: 'center', color: '#8E8E93', marginBottom: 30, fontSize: 16, fontStyle: 'italic' }
+  container: { flex: 1, backgroundColor: '#FDFBF7' },
+  headerSection: { paddingHorizontal: 25 },
+  header: { fontSize: 32, fontWeight: '900', color: '#0F172A', marginBottom: 20 },
+  banner: { flexDirection: 'row', padding: 18, borderRadius: 16, marginBottom: 25, elevation: 5, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.2, alignItems: 'center', justifyContent: 'center' },
+  bannerText: { color: '#fff', fontWeight: '800', fontSize: 16, letterSpacing: 1 },
+  scroll: { paddingHorizontal: 20 },
+  bentoCard: { backgroundColor: '#FFFFFF', borderRadius: 28, padding: 22, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.05, shadowRadius: 15, elevation: 2, marginBottom: 30 },
+  label: { fontSize: 12, fontWeight: '800', color: '#94A3B8', letterSpacing: 1.5, marginBottom: 15 },
+  sectionLabel: { fontSize: 12, fontWeight: '800', color: '#64748B', letterSpacing: 1.5, marginBottom: 15, marginLeft: 5 },
+  row: { flexDirection: 'row', gap: 10 },
+  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 16, height: 55, paddingHorizontal: 15, marginBottom: 10, borderWidth: 1, borderColor: '#F1F5F9' },
+  inputIcon: { marginRight: 10 },
+  input: { flex: 1, fontSize: 16, fontWeight: '600', color: '#0F172A' },
+  actionRow: { flexDirection: 'row', gap: 12, marginTop: 10 },
+  btnStart: { flex: 1, backgroundColor: '#0F172A', height: 60, borderRadius: 18, alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
+  btnSave: { width: 60, height: 60, backgroundColor: '#E2E8F0', borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  btnEnd: { flexDirection: 'row', backgroundColor: '#F43F5E', paddingVertical: 20, paddingHorizontal: 30, borderRadius: 20, alignItems: 'center', elevation: 8, shadowColor: '#F43F5E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4 },
+  btnTxt: { color: '#fff', fontWeight: '900', fontSize: 16, letterSpacing: 1 },
+  hScroll: { marginBottom: 30, overflow: 'visible' },
+  presetCard: { backgroundColor: '#FFF', width: 160, padding: 18, borderRadius: 20, marginRight: 15, borderWidth: 1, borderColor: '#10B98144', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.03, elevation: 1 },
+  pTitle: { fontWeight: '800', color: '#10B981', fontSize: 15, marginBottom: 4 },
+  pSub: { fontSize: 12, color: '#64748B', fontWeight: '600' },
+  emptyText: { color: '#94A3B8', fontStyle: 'italic', marginBottom: 25, marginLeft: 5 },
+  liveContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 },
+  livePulseRing: { width: 160, height: 160, borderRadius: 80, backgroundColor: '#D1FAE5', alignItems: 'center', justifyContent: 'center', marginBottom: 30, shadowColor: '#10B981', shadowOffset: {width: 0, height: 0}, shadowOpacity: 0.5, shadowRadius: 30, elevation: 10 },
+  liveTitle: { fontSize: 24, fontWeight: '900', color: '#0F172A', marginBottom: 10 },
+  liveSubtitle: { textAlign: 'center', color: '#64748B', fontSize: 16, fontWeight: '500', marginBottom: 50, paddingHorizontal: 20 }
 });
