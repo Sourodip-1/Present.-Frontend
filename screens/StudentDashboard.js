@@ -1,176 +1,201 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Button, PermissionsAndroid, Platform, FlatList, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Animated, Platform, PermissionsAndroid, ScrollView } from 'react-native';
 import { BleManager } from 'react-native-ble-plx';
+import * as LocalAuthentication from 'expo-local-authentication';
 
-const bleManager = new BleManager();
+// USE THE INSTALLED PLX MANAGER
+const manager = new BleManager();
 
-export default function StudentDashboard() {
-  const [statusText, setStatusText] = useState('Press to find teacher');
+export default function StudentDashboard({ route }) {
+  const { phone } = route?.params || { phone: '9999999999' };
+  const [view, setView] = useState('radar');
+  const [discoveredSessions, setDiscoveredSessions] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [stats, setStats] = useState({});
   const [isScanning, setIsScanning] = useState(false);
-  const [devices, setDevices] = useState([]);
+  
+  const CLASS_UUID = '94f275e7-a7eb-436f-8dc8-0524ba3bbf05';
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Pseudo-distance formula based on physics of BLE waves
-  const calculateDistance = (rssi) => {
-    if (rssi === 0) return -1.0;
-    const txPower = -59; // Hardcoded expected RSSI power at 1 meter
-    const ratio = rssi * 1.0 / txPower;
-    if (ratio < 1.0) {
-      return Math.pow(ratio, 10).toFixed(1);
-    } else {
-      const distance = (0.89976) * Math.pow(ratio, 7.7095) + 0.111;
-      return distance.toFixed(1);
-    }
-  };
+  async function fetchMyRecords() {
+    try {
+      const res = await fetch(`http://10.189.118.185:3000/api/records/student/${phone}`);
+      const data = await res.json();
+      setHistory(data.history || []);
+      setStats(data.subjectStats || {});
+    } catch (err) { console.log('Hist Error'); }
+  }
 
-  const requestPermissions = async () => {
+  async function requestPermissions() {
     if (Platform.OS === 'android') {
-      const apiLevel = parseInt(Platform.Version.toString(), 10);
-      if (apiLevel < 31) {
-        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } else {
-        const result = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-        ]);
-        return (
-          result['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED &&
-          result['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED &&
-          result['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED
-        );
-      }
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
     }
-    return true;
-  };
+  }
 
-  const startAttendance = async () => {
-    const isGranted = await requestPermissions();
-    if (!isGranted) {
-      setStatusText('Error: Please accept Bluetooth permissions!');
+  async function startRadar() {
+    await requestPermissions();
+    
+    // Check if BT is on
+    const state = await manager.state();
+    if (state !== 'PoweredOn') {
+      Alert.alert('Bluetooth Required', 'Please enable Bluetooth to mark attendance.');
       return;
     }
 
-    setDevices([]); // clear old devices
     setIsScanning(true);
-    setStatusText('Scanning room for 5 seconds...');
-    console.log('--- Starting BLE scan ---');
+    setDiscoveredSessions([]);
+    
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.2, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true })
+      ])
+    ).start();
 
-    try {
-      bleManager.startDeviceScan(null, null, (error, device) => {
-        if (error) {
-          console.log('BLE Scan Error:', error.message);
-          return;
-        }
-
-        const deviceName = device.name || device.localName || 'Unknown Device';
-
-        setDevices((prevDevices) => {
-          // Check if device already in the UI array to prevent duplicates
-          if (!prevDevices.find(d => d.id === device.id)) {
-            return [...prevDevices, {
-              id: device.id,
-              name: deviceName,
-              rssi: device.rssi,
-              distance: calculateDistance(device.rssi)
-            }];
-          }
-          return prevDevices;
-        });
-      });
-
-      // Stop automatically after 5 seconds
-      setTimeout(() => {
-        bleManager.stopDeviceScan();
+    // Start Scanning with PLX
+    manager.startDeviceScan([CLASS_UUID], null, async (error, device) => {
+      if (error) {
+        console.log('Scan Error:', error);
+        return;
+      }
+      if (device) {
+        // BLE SIGNAL CAUGHT! Proximity Mathematically Confirmed!
+        manager.stopDeviceScan();
         setIsScanning(false);
-        setStatusText('Scan complete! Check devices below.');
-        console.log('--- BLE scan stopped ---');
-      }, 5000);
-    } catch (err) {
-      console.log('Throw error:', err.message);
-      setStatusText('Failed to start scanner.');
+        pulseAnim.setValue(1);
+        
+        // Now that they physically intercepted the Teacher's unique UUID packet,
+        // we can fetch the exact authorized class for this student.
+        try {
+          const res = await fetch(`http://10.189.118.185:3000/api/sessions/active`);
+          if (res.ok) {
+            const authorizedClasses = await res.json();
+            setDiscoveredSessions(authorizedClasses);
+          }
+        } catch(err) {}
+      }
+    });
+
+    // Auto-stop after 8s if NO signal physically detected
+    setTimeout(() => {
+      manager.stopDeviceScan();
       setIsScanning(false);
+      pulseAnim.setValue(1);
+    }, 8000);
+  }
+
+  // Obsolete Base64 parser removed for clean Proximity UUID validation
+
+  async function joinSession(session) {
+    const auth = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Verify Identity',
+      fallbackLabel: 'Use Passcode',
+    });
+
+    if (!auth.success) return;
+
+    const apiRes = await fetch('http://10.189.118.185:3000/api/attendance/mark', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: session._id, studentPhone: phone })
+    });
+
+    const result = await apiRes.json();
+
+    if (apiRes.ok) {
+      Alert.alert('Verified ✅', `Presence confirmed!`);
+      setDiscoveredSessions([]); 
+      if (view === 'history') fetchMyRecords();
+    } else {
+      Alert.alert('Registration Denied ❌', result.error || 'Server rejected attendance.');
     }
-  };
+  }
 
   useEffect(() => {
-    return () => {
-      bleManager.stopDeviceScan();
-    };
-  }, []);
-
-  const renderDevice = ({ item }) => {
-    // Math logic: If the signal indicates they are closer than 3.0 meters, they are in the classroom!
-    const isClose = item.distance < 3.0;
-
-    return (
-      <View style={[styles.deviceCard, { borderLeftColor: isClose ? '#4CAF50' : '#F44336' }]}>
-        <Text style={styles.deviceName}>{item.name}</Text>
-        <Text style={{ color: isClose ? '#4CAF50' : '#F44336', fontWeight: 'bold' }}>
-          {isClose ? '🟢 Inside Room' : '🔴 Too Far (Proxy)'} - {item.distance}m away
-        </Text>
-        <Text style={{ fontSize: 12, color: '#aaa', marginTop: 4 }}>ID: {item.id} | RSSI: {item.rssi}</Text>
-      </View>
-    );
-  };
+    if (view === 'history') fetchMyRecords();
+    return () => manager.stopDeviceScan();
+  }, [view]);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Live Proximity Radar</Text>
-
-      <View style={{ marginVertical: 20, width: '100%' }}>
-        <Button
-          title={isScanning ? "Scanning..." : "Mark Attendance"}
-          onPress={startAttendance}
-          disabled={isScanning}
-        />
+      <View style={styles.tabHeader}>
+        <TouchableOpacity onPress={() => setView('radar')} style={[styles.tab, view === 'radar' && styles.activeTab]}>
+          <Text style={styles.tabText}>RADAR</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setView('history')} style={[styles.tab, view === 'history' && styles.activeTab]}>
+          <Text style={styles.tabText}>HISTORY</Text>
+        </TouchableOpacity>
       </View>
 
-      <Text style={styles.status}>{statusText}</Text>
-
-      <FlatList
-        data={devices.sort((a, b) => a.distance - b.distance)}
-        keyExtractor={(item) => item.id}
-        renderItem={renderDevice}
-        style={{ width: '100%', marginTop: 20 }}
-      />
+      {view === 'radar' ? (
+        <View style={{ flex: 1 }}>
+          <Text style={styles.header}>Class Radar 📡</Text>
+          <View style={styles.radarContainer}>
+            <Animated.View style={[styles.pulse, { transform: [{ scale: pulseAnim }] }]}>
+              <TouchableOpacity style={[styles.scanCircle, isScanning && styles.scanningCircle]} onPress={startRadar} disabled={isScanning}>
+                <Text style={styles.scanBtnText}>{isScanning ? 'SEARCHING...' : 'SCAN'}</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+          <FlatList
+            data={discoveredSessions}
+            keyExtractor={(item) => item._id}
+            renderItem={({ item }) => (
+              <View style={styles.sessionCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.subject}>{item.subjectName}</Text>
+                  <Text style={styles.teacher}>Prof. {item.teacherName}</Text>
+                </View>
+                <TouchableOpacity style={styles.joinBtn} onPress={() => joinSession(item)}>
+                  <Text style={styles.joinText}>JOIN</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            ListEmptyComponent={!isScanning && <Text style={styles.emptyText}>Tap radar to search.</Text>}
+          />
+        </View>
+      ) : (
+        <View style={{ flex: 1 }}>
+          <Text style={styles.header}>My Dashboard</Text>
+          <FlatList
+            data={history}
+            keyExtractor={(item) => item._id}
+            renderItem={({ item }) => (
+              <View style={styles.historyCard}>
+                <Text style={styles.histSub}>{item.sessionId?.subjectName}</Text>
+                <Text style={styles.histTime}>{new Date(item.timestamp).toLocaleDateString()}</Text>
+              </View>
+            )}
+          />
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  status: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-    marginBottom: 10
-  },
-  deviceCard: {
-    backgroundColor: '#f9f9f9',
-    padding: 15,
-    borderRadius: 8,
-    borderLeftWidth: 6,
-    marginBottom: 15,
-    width: '100%',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2
-  },
-  deviceName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 5,
-    color: '#333'
-  }
+  container: { flex: 1, padding: 25, backgroundColor: '#F8F9FA', marginTop: 30 },
+  tabHeader: { flexDirection: 'row', backgroundColor: '#E5E5EA', borderRadius: 12, padding: 4, marginBottom: 25 },
+  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
+  activeTab: { backgroundColor: '#fff' },
+  tabText: { fontWeight: '700', color: '#1C1C1E' },
+  header: { fontSize: 26, fontWeight: '900', color: '#1C1C1E', marginBottom: 20 },
+  radarContainer: { height: 180, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  pulse: { width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(0, 122, 255, 0.1)', justifyContent: 'center', alignItems: 'center' },
+  scanCircle: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center' },
+  scanningCircle: { backgroundColor: '#FF9500' },
+  scanBtnText: { color: '#fff', fontWeight: '900' },
+  sessionCard: { backgroundColor: '#fff', padding: 18, borderRadius: 16, flexDirection: 'row', alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#E5E5EA' },
+  subject: { fontSize: 18, fontWeight: 'bold' },
+  teacher: { fontSize: 14, color: '#8E8E93' },
+  joinBtn: { backgroundColor: '#34C759', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10 },
+  joinText: { color: '#fff', fontWeight: 'bold' },
+  historyCard: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#E5E5EA' },
+  histSub: { fontWeight: 'bold' },
+  histTime: { fontSize: 12, color: '#8E8E93' },
+  emptyText: { textAlign: 'center', color: '#8E8E93', marginTop: 20 }
 });

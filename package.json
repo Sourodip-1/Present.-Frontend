@@ -18,6 +18,7 @@
     "expo": "~55.0.8",
     "expo-build-properties": "~55.0.10",
     "expo-dev-client": "~55.0.18",
+    "expo-local-authentication": "~55.0.9",
     "expo-status-bar": "~55.0.4",
     "patch-package": "^8.0.1",
     "react": "19.2.0",
