@@ -43,7 +43,7 @@ const FormItem = ({ children, delay = 0 }) => {
 };
 
 export default function UserDetailsScreen({ route, navigation }) {
-  const { phone } = route?.params || { phone: '' };
+  const { email } = route?.params || { email: '' };
   
   const [name, setName] = useState('');
   const [roll, setRoll] = useState('');
@@ -73,7 +73,7 @@ export default function UserDetailsScreen({ route, navigation }) {
     setLoading(true);
     try {
       const payload = {
-        phone: phone,
+        email: email,
         role: role,
         teacherCode: role === 'teacher' ? 'PRES-TEACH-2026' : undefined,
         profile: role === 'student' ? {
@@ -88,7 +88,7 @@ export default function UserDetailsScreen({ route, navigation }) {
         }
       };
 
-      const response = await fetch('http://10.189.118.185:3000/api/auth/register-profile', {
+      const response = await fetch('http://10.43.242.77:3000/api/auth/register-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -97,9 +97,9 @@ export default function UserDetailsScreen({ route, navigation }) {
       const data = await response.json();
       if (response.ok) {
         if (role === 'teacher') {
-          navigation.navigate('TeacherDashboard', { phone });
+          navigation.navigate('TeacherDashboard', { email });
         } else {
-          navigation.navigate('StudentDashboard', { phone });
+          navigation.navigate('StudentDashboard', { email });
         }
       } else {
         Alert.alert('Registration Failed', data.error || 'Server error.');

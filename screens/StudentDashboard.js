@@ -6,11 +6,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { BleManager } from 'react-native-ble-plx';
-import * as LocalAuthentication from 'expo-local-authentication';
+import SafeStorage from '../utils/storage';
+// import { BleManager } from 'react-native-ble-plx';
+// import * as LocalAuthentication from 'expo-local-authentication';
 
 const { width, height } = Dimensions.get('window');
-const bleManager = new BleManager();
+let bleManager;
 const CLASS_UUID = '94f275e7-a7eb-436f-8dc8-0524ba3bbf05';
 
 // ─── Design System & Palette ────────────────────────────────────────────────
@@ -45,8 +46,8 @@ const GlassCard = ({ children, style, onPress, onLongPress }) => {
 };
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
-export default function StudentDashboard({ route }) {
-  const { phone } = route?.params || { phone: '9999999999' };
+export default function StudentDashboard({ route, navigation }) {
+  const { email } = route?.params || { email: 'student@university.edu' };
   const insets = useSafeAreaInsets();
 
   // States
@@ -54,6 +55,7 @@ export default function StudentDashboard({ route }) {
   const [history, setHistory] = useState([]);
   const [stats, setStats] = useState({ attendancePercentage: '0', streak: 0, classesAttended: 0 });
   const [isScanning, setIsScanning] = useState(false);
+  const [isFetchingSessions, setIsFetchingSessions] = useState(false);
   const [attendanceMarked, setAttendanceMarked] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [nearbyDevices, setNearbyDevices] = useState([]);
@@ -83,20 +85,28 @@ export default function StudentDashboard({ route }) {
   // Data Fetching
   async function fetchMyRecords() {
     try {
-      const pRes = await fetch(`http://10.189.118.185:3000/api/users/${phone}`);
+      const pRes = await fetch(`http://10.43.242.77:3000/api/users/${email}`);
       if (pRes.ok) {
         const pData = await pRes.json();
-        setProfile(pData);
+        // Correctly mapping backend studentProfile to frontend local profile state
+        if (pData && pData.studentProfile) {
+          setProfile({
+            name: pData.studentProfile.fullName || 'No Name',
+            universityRoll: pData.studentProfile.universityRoll || '---',
+            year: pData.studentProfile.year ?? '--',
+            semester: pData.studentProfile.semester ?? '--'
+          });
+        }
       }
-      
-      const rRes = await fetch(`http://10.189.118.185:3000/api/records/student/${phone}`);
+
+      const rRes = await fetch(`http://10.43.242.77:3000/api/records/student/${email}`);
       if (rRes.ok) {
         const data = await rRes.json();
         setHistory(data.history || []);
-        
+
         let attendedCount = data.history ? data.history.length : 0;
-        let streakCount = data.history ? Math.min(attendedCount, 12) : 0; 
-        let pct = attendedCount > 0 ? '100' : '0'; 
+        let streakCount = data.history ? Math.min(attendedCount, 12) : 0;
+        let pct = attendedCount > 0 ? '100' : '0';
 
         setStats({
           attendancePercentage: pct,
@@ -153,7 +163,7 @@ export default function StudentDashboard({ route }) {
       Animated.timing(sheetY, { toValue: snapPoints.closed, duration: 300, useNativeDriver: true }).start();
       if (isScanning) {
         if (radarLoop) radarLoop.stop();
-        bleManager.stopDeviceScan();
+        if (bleManager) bleManager.stopDeviceScan();
         setIsScanning(false);
       }
     }
@@ -176,7 +186,7 @@ export default function StudentDashboard({ route }) {
       p2 = Animated.loop(Animated.parallel([Animated.timing(pulseAnim2, { toValue: 1.8, duration: 2000, useNativeDriver: true }), Animated.timing(pulseOpac2, { toValue: 0, duration: 2000, useNativeDriver: true })]));
       p2.start();
     }, 1000);
-    return () => { p1.stop(); if (p2) p2.stop(); bleManager.stopDeviceScan(); };
+    return () => { p1.stop(); if (p2) p2.stop(); if (bleManager) bleManager.stopDeviceScan(); };
   }, []);
 
   const requestPermissions = async () => {
@@ -196,15 +206,6 @@ export default function StudentDashboard({ route }) {
 
   const handleScanInit = async () => {
     if (attendanceMarked || isScanning) return;
-    const granted = await requestPermissions();
-    if (!granted) return;
-
-    // Wait for BT
-    const state = await bleManager.state();
-    if (state !== 'PoweredOn') {
-      Alert.alert('Bluetooth Off', 'Turn Bluetooth on to scan for classes.');
-      return;
-    }
 
     setShowScanner(true);
     setIsScanning(true);
@@ -221,55 +222,150 @@ export default function StudentDashboard({ route }) {
     radar.start();
     setRadarLoop(radar);
 
-    // Deep REAL BLE Scan
-    bleManager.startDeviceScan([CLASS_UUID], null, async (error, device) => {
-      if (error) { console.log('Scan Error:', error); return; }
-      if (device) {
-        bleManager.stopDeviceScan();
-        try {
-          const res = await fetch(`http://10.189.118.185:3000/api/sessions/active`);
-          if (res.ok) {
-            const authorizedClasses = await res.json();
-            // Match the student's year/sem or just display all active 
-            setNearbyDevices(authorizedClasses.map(session => ({
-              id: session._id,
-              name: session.subjectName,
-              teacher: session.teacherName,
-              sessionId: session._id,
-            })));
-          }
-        } catch(err) {}
+    // --- ATTEMPT REAL BLE SCAN ---
+    let bleAvailable = false;
+    if (!bleManager) {
+      try {
+        const { BleManager } = require('react-native-ble-plx');
+        bleManager = new BleManager();
+        const state = await bleManager.state();
+        if (state === 'PoweredOn') bleAvailable = true;
+      } catch (e) {
+        console.log('[BLE] Module not available, falling back to Wi-Fi discovery.');
       }
-    });
+    } else {
+      try {
+        const state = await bleManager.state();
+        if (state === 'PoweredOn') bleAvailable = true;
+      } catch (e) { }
+    }
 
-    // Auto-stop radar after 8s
-    setTimeout(() => {
-      if (isScanning) {
-        bleManager.stopDeviceScan();
-        setIsScanning(false);
-        if (radarLoop) radarLoop.stop();
+    if (bleAvailable) {
+      // Real BLE scan — with manual UUID filtering (more reliable on Android)
+      const granted = await requestPermissions();
+      if (granted) {
+        console.log('[BLE] Starting broad hardware scan...');
+        let foundBeacon = false;
+        
+        bleManager.startDeviceScan(null, { allowDuplicates: false }, async (error, device) => {
+          if (error) { 
+            console.log('[BLE] Scan Error:', error.message); 
+            return; 
+          }
+          if (device) {
+            // Check if this device is advertising our Class UUID
+            const hasClassUUID = device.serviceUUIDs && device.serviceUUIDs.includes(CLASS_UUID);
+            const isTargetBeacon = hasClassUUID || (device.localName && device.localName.includes('Present'));
+            
+            if (isTargetBeacon && !foundBeacon) {
+              foundBeacon = true;
+              console.log('[BLE] Found Teacher Beacon!', device.id);
+              bleManager.stopDeviceScan();
+              await fetchActiveSessions(radar);
+            }
+          }
+        });
+        
+        // 8s timeout to stop scanning
+        setTimeout(async () => {
+          if (bleManager) bleManager.stopDeviceScan();
+          if (!foundBeacon) {
+            console.log('[BLE] Timeout: No beacon found. Triggering Wi-Fi fallback...');
+            await fetchActiveSessions(radar);
+          }
+        }, 8000);
+      } else {
+         console.log('[SCAN] Permissions denied, using Wi-Fi fallback...');
+         await fetchActiveSessions(radar);
       }
-    }, 8000);
+    } else {
+      // Wi-Fi Fallback: Directly load active sessions from the server
+      console.log('[SCAN] Using Wi-Fi fallback to discover active sessions...');
+      await fetchActiveSessions(radar);
+      // No timeout needed — fetchActiveSessions handles all cleanup
+    }
+  };
+
+  const fetchActiveSessions = async (radar) => {
+    setIsFetchingSessions(true);
+    try {
+      console.log('[SCAN] Fetching active sessions from server...');
+      const res = await fetch('http://10.43.242.77:3000/api/sessions/active');
+      console.log('[SCAN] Response status:', res.status);
+      if (res.ok) {
+        const activeSessions = await res.json();
+        console.log('[SCAN] Active sessions count:', activeSessions.length);
+        if (activeSessions.length === 0) {
+          setNearbyDevices([]);
+          setIsScanning(false);
+          setIsFetchingSessions(false);
+          radar?.stop();
+          return;
+        }
+        // Set devices FIRST, then stop scanning indicator to avoid 'Scan Timeout' flash
+        setNearbyDevices(activeSessions.map(session => ({
+          id: session._id,
+          name: session.subjectName,
+          teacher: session.teacherName,
+          sessionId: session._id,
+          department: session.department,
+          section: session.section,
+        })));
+        setIsFetchingSessions(false);
+        setIsScanning(false);
+        radar?.stop();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error('[SCAN] Server error:', errData);
+        Alert.alert('Server Error', 'Could not reach the class registry.');
+        setIsFetchingSessions(false);
+        setIsScanning(false);
+        radar?.stop();
+      }
+    } catch (err) {
+      console.error('[fetchActiveSessions] Network Error:', err.message);
+      Alert.alert('Network Error', `Could not connect: ${err.message}`);
+      setIsFetchingSessions(false);
+      setIsScanning(false);
+      radar?.stop();
+    }
   };
 
   const handleDeviceSelect = async (device) => {
     if (radarLoop) radarLoop.stop();
-    bleManager.stopDeviceScan();
+    if (bleManager) bleManager.stopDeviceScan();
     setIsScanning(false);
 
     // Bio Auth
-    const auth = await LocalAuthentication.authenticateAsync({
-      promptMessage: 'Verify Identity for Attendance',
-      fallbackLabel: 'Use Passcode',
-    });
+    let authResult = { success: false };
+    try {
+      const LocalAuthentication = require('expo-local-authentication');
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
-    if (!auth.success) return;
+      if (hasHardware && isEnrolled) {
+        authResult = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Verify Identity for Attendance',
+          fallbackLabel: 'Use Passcode',
+        });
+      } else {
+        // Fallback or skip if not available in this environment
+        console.log('Bio-auth not available or not enrolled. Skipping for demo/dev.');
+        authResult = { success: true }; // Allowing for now so they can test the rest
+      }
+    } catch (e) {
+      console.log('LocalAuthentication error', e);
+      // Fallback for Expo Go or environments without the module
+      Alert.alert('Authentication Skip', 'Biometric module not found. Proceeding without authentication for development.');
+      authResult = { success: true };
+    }
 
-    // Secure Register Post
-    const apiRes = await fetch('http://10.189.118.185:3000/api/attendance/mark', {
+    if (!authResult.success) return;
+
+    const apiRes = await fetch('http://10.43.242.77:3000/api/attendance/mark', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: device.sessionId, studentPhone: phone })
+      body: JSON.stringify({ sessionId: device.sessionId, studentEmail: email })
     });
 
     if (apiRes.ok) {
@@ -296,11 +392,14 @@ export default function StudentDashboard({ route }) {
             <Text style={styles.studentUUID}>{profile.universityRoll} • Year {profile.year} • Sem {profile.semester}</Text>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.iconBtn}>
-              <MaterialCommunityIcons name="cog-outline" size={24} color={COLORS.textDark} />
+            <TouchableOpacity style={styles.iconBtn} onPress={async () => {
+              await SafeStorage.clear();
+              navigation.replace('Login');
+            }}>
+              <MaterialCommunityIcons name="logout" size={24} color={COLORS.textDark} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.avatarBtn}>
-              <Image source={{ uri: 'https://i.pravatar.cc/150?u=sourodip' }} style={styles.avatar} />
+              <Image source={{ uri: 'https://i.pravatar.cc/150?u=student' }} style={styles.avatar} />
             </TouchableOpacity>
           </View>
         </Animated.View>
@@ -426,7 +525,7 @@ export default function StudentDashboard({ route }) {
         <Animated.View style={[styles.sheetBackdrop, { opacity: sheetY.interpolate({ inputRange: [snapPoints.full, snapPoints.half, snapPoints.closed], outputRange: [1, 1, 0], extrapolate: 'clamp' }) }]}>
           <Pressable style={{ flex: 1 }} onPress={() => !isScanning && setShowScanner(false)} />
         </Animated.View>
-        
+
         <View style={[styles.scannerContent, { paddingBottom: insets.bottom + 20 }]}>
           <View {...panResponder.panHandlers} style={styles.dragHandleContainer}><View style={styles.dragHandle} /></View>
 
@@ -442,12 +541,22 @@ export default function StudentDashboard({ route }) {
 
               <View style={styles.radarContainer}>
                 <Animated.View style={[styles.radarCircle, { transform: [{ scale: radarScale }], opacity: radarOpacity }]} />
-                <Animated.View style={[styles.radarCircle, { transform: [{ scale: radarScale.interpolate({ inputRange: [1, 2.5], outputRange: [1, 2]}) }], opacity: radarOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 0.5]}) }]} />
+                <Animated.View style={[styles.radarCircle, { transform: [{ scale: radarScale.interpolate({ inputRange: [1, 2.5], outputRange: [1, 2] }) }], opacity: radarOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 0.5] }) }]} />
                 <View style={styles.radarCore}><MaterialCommunityIcons name="antenna" size={32} color={COLORS.primaryEnd} /></View>
               </View>
 
               {nearbyDevices.length === 0 ? (
-                <View style={styles.emptyDeviceList}><Text style={styles.scanningText}>{isScanning ? 'Listening via Bluetooth...' : 'Scan Timeout.'}</Text></View>
+                <View style={styles.emptyDeviceList}>
+                  {(isScanning || isFetchingSessions) ? (
+                    <Text style={styles.scanningText}>Searching for active classes...</Text>
+                  ) : (
+                    <>
+                      <MaterialCommunityIcons name="wifi-off" size={36} color="#CBD5E1" />
+                      <Text style={[styles.scanningText, { marginTop: 10, color: '#94A3B8' }]}>No active classes found.</Text>
+                      <Text style={{ fontSize: 12, color: '#CBD5E1', marginTop: 4 }}>Ask your teacher to start the session.</Text>
+                    </>
+                  )}
+                </View>
               ) : (
                 <ScrollView style={styles.deviceList} showsVerticalScrollIndicator={false}>
                   {nearbyDevices.map((device, i) => (

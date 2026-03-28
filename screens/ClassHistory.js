@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
 
 export default function ClassHistory({ route, navigation }) {
-  const { instanceId, instanceName } = route.params;
+  const { instanceId = 'dm1', instanceName = 'Class' } = route?.params || {};
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -12,7 +12,7 @@ export default function ClassHistory({ route, navigation }) {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`http://10.189.118.185:3000/api/instances/${instanceId}/history`);
+      const response = await fetch(`http://10.43.242.77:3000/api/instances/${instanceId}/history`);
       const data = await response.json();
       setSessions(data);
     } catch (err) {

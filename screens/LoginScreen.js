@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Dimensions, KeyboardAvoidingView, Platform, StatusBar,
-  Image, Keyboard, Alert
+  Image, Keyboard, Alert, Animated
 } from 'react-native';
+import SafeStorage from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MeshGradient from '../components/MeshGradient';
 import { mascotFrames } from '../components/MascotFrames';
@@ -42,14 +43,21 @@ const MascotAnimation = React.memo(({ length, isKeyboardVisible }) => {
   const requestRef = useRef();
 
   useEffect(() => {
-    targetRef.current = Math.min(89, Math.floor((length / 10) * 89));
+    // Target frame 89 if length > 0, else frame 0
+    targetRef.current = length > 0 ? 89 : 0;
+    let lastTime = Date.now();
+
     const animate = () => {
+      const now = Date.now();
+      const dt = now - lastTime;
+      lastTime = now;
+
       if (frameRef.current !== targetRef.current) {
         let diff = targetRef.current - frameRef.current;
-        
-        // Easing function for smooth interpolation instead of rigid steps
-        let step = diff * 0.15; 
-        if (Math.abs(step) < 0.5) step = Math.sign(diff) * 0.5;
+
+        // 89 frames in exactly 2000ms -> 89 / 2000 frames per ms (Delta Time)
+        const stepRate = 89 / 2000;
+        let step = Math.sign(diff) * Math.min(Math.abs(diff), stepRate * dt);
 
         frameRef.current += step;
 
@@ -64,42 +72,47 @@ const MascotAnimation = React.memo(({ length, isKeyboardVisible }) => {
     return () => cancelAnimationFrame(requestRef.current);
   }, [length]);
 
-  // Pre-loader for the next 3 frames to keep GPU cache warm
-  const lookAhead = [1, 2, 3].map(offset => {
-    const direction = targetRef.current >= currentFrame ? 1 : -1;
-    const next = Math.min(89, Math.max(0, currentFrame + (offset * direction * 2)));
-    return (
-      <Image
-        key={`lookahead-${offset}-${next}`}
-        source={mascotFrames[next]}
-        style={{ width: 0, height: 0, opacity: 0 }}
-        fadeDuration={0}
-      />
-    );
-  });
+  // Sliding window of +/- 8 frames to balance memory vs GPU rendering
+  const windowRadius = 8;
+  const startIndex = Math.max(0, currentFrame - windowRadius);
+  const endIndex = Math.min(mascotFrames.length - 1, currentFrame + windowRadius);
+
+  const visibleFrames = [];
+  for (let i = startIndex; i <= endIndex; i++) {
+    visibleFrames.push(i);
+  }
 
   return (
     <View style={[styles.mascotContainer, isKeyboardVisible && styles.mascotContainerEnlarged]}>
-      {lookAhead}
+      {/* Backing pads rendered FIRST so they are UNDER the mascot */}
       <View style={[styles.blueMascotBacking, isKeyboardVisible && styles.blueMascotBackingEnlarged]} />
       <View style={[styles.greenMascotBacking, isKeyboardVisible && styles.greenMascotBackingEnlarged]} />
-      <Image
-        source={mascotFrames[currentFrame]}
-        style={styles.mascotImage}
-        resizeMode="contain"
-        fadeDuration={0}
-      />
+
+      {/* Sliding Window Opacity Stack */}
+      {visibleFrames.map((index) => (
+        <Image
+          key={`fixed-frame-${index}`}
+          source={mascotFrames[index]}
+          style={[
+            styles.mascotImage,
+            { position: 'absolute', opacity: index === currentFrame ? 1 : 0, zIndex: 10 }
+          ]}
+          resizeMode="contain"
+          fadeDuration={0}
+        />
+      ))}
     </View>
   );
 });
 
 export default function LoginScreen({ navigation }) {
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState('');
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Default true to allow auto-login check
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
+    checkLocalSession();
     const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
     const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
     return () => {
@@ -108,21 +121,40 @@ export default function LoginScreen({ navigation }) {
     };
   }, []);
 
+  const checkLocalSession = async () => {
+    try {
+      const savedEmail = await SafeStorage.getItem('userEmail');
+      const savedRole = await SafeStorage.getItem('userRole');
+      
+      if (savedEmail && savedRole && savedRole !== 'unknown') {
+        const targetScreen = savedRole === 'teacher' ? 'TeacherDashboard' : 'StudentDashboard';
+        navigation.replace(targetScreen, { email: savedEmail });
+      } else {
+        setLoading(false); // Stop loading if no valid session
+      }
+    } catch (err) {
+      console.log('Error checking session', err);
+      setLoading(false);
+    }
+  };
+
   const sendOTP = async () => {
-    if (phoneNumber.length !== 10) {
-      Alert.alert('Invalid Number', 'Please enter a valid 10-digit number');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address');
       return;
     }
+
     setLoading(true);
     try {
-      const response = await fetch('http://10.189.118.185:3000/api/auth/send-otp', {
+      const response = await fetch('http://10.43.242.77:3000/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phoneNumber })
+        body: JSON.stringify({ email: email.toLowerCase() })
       });
       const data = await response.json();
       if (response.ok) {
-        navigation.navigate('OTP', { phone: phoneNumber });
+        navigation.navigate('OTP', { email: email.toLowerCase() });
       } else {
         Alert.alert('Error', data.error || 'Failed to send OTP');
       }
@@ -136,15 +168,17 @@ export default function LoginScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <MeshGradient />
-      <DotGrid />
+      <View style={{ position: 'absolute', width: '100%', height: '100%', zIndex: -1 }}>
+        <DotGrid />
+      </View>
       <View style={styles.bottomFill} />
       <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}
+        style={[styles.flex, { zIndex: 1 }]}
       >
         <View style={[styles.topSection, { paddingTop: insets.top }]}>
-          <MascotAnimation length={phoneNumber.length} isKeyboardVisible={isKeyboardVisible} />
+          <MascotAnimation length={email.length} isKeyboardVisible={isKeyboardVisible} />
           {!isKeyboardVisible && (
             <>
               <Text style={styles.brandTitle}>PRESENT</Text>
@@ -155,17 +189,17 @@ export default function LoginScreen({ navigation }) {
 
         <View style={[styles.bottomBox, { paddingBottom: insets.bottom + 500, marginBottom: -500 }]}>
           <View style={styles.formContainer}>
-            <Text style={styles.label}>ENTER MOBILE NUMBER</Text>
+            <Text style={styles.label}>ENTER EMAIL ADDRESS</Text>
             <View style={styles.inputContainer}>
-              <Text style={styles.prefix}>+91</Text>
               <TextInput
                 style={styles.input}
-                placeholder="00000 00000"
+                placeholder="student@university.edu"
                 placeholderTextColor="rgba(0,0,0,0.4)"
-                keyboardType="phone-pad"
-                value={phoneNumber}
-                onChangeText={setPhoneNumber}
-                maxLength={10}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={email}
+                onChangeText={setEmail}
               />
             </View>
 
@@ -191,13 +225,13 @@ const styles = StyleSheet.create({
   dot: { position: 'absolute', width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#444cf7', opacity: 0.45 },
   flex: { flex: 1 },
   topSection: { flex: 2.2, justifyContent: 'center', paddingHorizontal: 40 },
-  mascotContainer: { height: 220, aspectRatio: 1.77, alignSelf: 'center', justifyContent: 'center', alignItems: 'center', marginBottom: 15, backgroundColor: 'transparent' },
+  mascotContainer: { height: 220, aspectRatio: 1.77, alignSelf: 'center', justifyContent: 'center', alignItems: 'center', marginBottom: 15, zIndex: 100 },
   mascotContainerEnlarged: { height: 270, marginBottom: 0 },
-  blueMascotBacking: { position: 'absolute', width: 50, height: 68, backgroundColor: '#FFF', borderRadius: 20, right: '35%', top: '10%' },
-  blueMascotBackingEnlarged: { width: 63, height: 100, borderRadius: 30, top: '12%', right: '33%' },
-  greenMascotBacking: { position: 'absolute', width: 25, height: 35, backgroundColor: '#FFF', borderRadius: 15, left: '25%', bottom: '13%' },
-  greenMascotBackingEnlarged: { width: 36, height: 50, borderRadius: 20, left: '23%', bottom: '15%' },
-  mascotImage: { width: '100%', height: '100%', mixBlendMode: 'multiply' },
+  blueMascotBacking: { position: 'absolute', width: 30, height: 68, backgroundColor: '#000000ff', borderRadius: 20, right: '43%', top: '10%', zIndex: 5 },
+  blueMascotBackingEnlarged: { width: 60, height: 100, borderRadius: 30, top: '10%', right: '37%' },
+  greenMascotBacking: { position: 'absolute', width: 45, height: 35, backgroundColor: '#000000ff', borderRadius: 15, left: '28%', bottom: '14%', zIndex: 5 },
+  greenMascotBackingEnlarged: { width: 55, height: 50, borderRadius: 20, left: '30%', bottom: '12%' },
+  mascotImage: { width: '100%', height: '100%' },
   brandTitle: { fontSize: 38, fontWeight: '900', color: '#000000', letterSpacing: -1.5, textAlign: 'left', marginTop: -10 },
   brandSubtitle: { fontSize: 18, color: '#666', fontWeight: '500', marginTop: 5 },
   bottomBox: { flex: 1, backgroundColor: '#22C55E', borderTopLeftRadius: 50, borderTopRightRadius: 50, paddingTop: 40, paddingHorizontal: 30, shadowColor: '#22C55E', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.3, shadowRadius: 20, elevation: 20 },
