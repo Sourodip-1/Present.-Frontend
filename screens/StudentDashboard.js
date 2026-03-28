@@ -7,6 +7,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import SafeStorage from '../utils/storage';
+import API_URL from '../config';
 // import { BleManager } from 'react-native-ble-plx';
 // import * as LocalAuthentication from 'expo-local-authentication';
 
