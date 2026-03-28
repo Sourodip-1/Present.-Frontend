@@ -132,7 +132,7 @@ export default function TeacherDashboard({ route, navigation }) {
                 date: new Date(s.startTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
                 subjectName: s.subjectName,
                 section: s.section,
-                present: 0, // placeholder — full report available via View Report
+                present: s.presentCount || 0,
                 total: (s.rollEnd - s.rollStart) + 1
               }));
             }
@@ -191,6 +191,24 @@ export default function TeacherDashboard({ route, navigation }) {
     }
   }
 
+  function deleteInstance(id) {
+    Alert.alert('Delete Preset', 'Are you sure you want to delete this preset?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try {
+          const res = await fetch(`http://10.43.242.77:3000/api/instances/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            fetchInstances();
+            if (activeInstanceId === id) {
+               setActiveInstanceId(null);
+               setSubjectName(''); setDepartment(''); setYear(''); setSemester(''); setSection(''); setClassroom(''); setRollStart(''); setRollEnd('');
+            }
+          }
+        } catch (e) { }
+      }}
+    ]);
+  }
+
   async function startAttendance() {
     if (!subjectName || !department || !semester || !section || !year || !classroom || !rollStart || !rollEnd) {
       Alert.alert('Error', 'All fields are required to start a session.');
@@ -232,7 +250,7 @@ export default function TeacherDashboard({ route, navigation }) {
     if (activeSessionId) await fetch(`http://10.43.242.77:3000/api/sessions/${activeSessionId}/end`, { method: 'PUT' });
     let advertiser;
     try { advertiser = require('react-native-ble-advertiser').default; } catch (e) { }
-    if (advertiser && typeof advertiser.stopBroadcast === 'function') await advertiser.stopBroadcast();
+    if (advertiser && typeof advertiser.stopBroadcast === 'function') await advertiser.stopBroadcast(CLASS_UUID);
     setIsLive(false);
     setStatusText('Off-Air');
     setActiveSessionId(null);
@@ -282,10 +300,10 @@ export default function TeacherDashboard({ route, navigation }) {
                   </View>
                 </View>
                 
-                {activeInstanceId && (
+                {activeSessionId && (
                   <TouchableOpacity 
                     style={styles.viewReportAction} 
-                    onPress={() => navigation.navigate('AttendanceReport', { instanceId: activeInstanceId, subjectName })}
+                    onPress={() => navigation.navigate('AttendanceReport', { sessionId: activeSessionId, subjectName })}
                     activeOpacity={0.7}
                   >
                     <MaterialCommunityIcons name="chart-box-outline" size={20} color="#2563EB" />
@@ -380,7 +398,13 @@ export default function TeacherDashboard({ route, navigation }) {
                       <TouchableOpacity 
                         key={i._id} 
                         style={[styles.compactCard, isActive && styles.activeCompactCard]} 
-                        onLongPress={() => selectInstance(i)}
+                        onLongPress={() => {
+                          Alert.alert('Manage Preset', `Options for ${i.subjectName}`, [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Load', onPress: () => selectInstance(i) },
+                            { text: 'Delete', style: 'destructive', onPress: () => deleteInstance(i._id) }
+                          ]);
+                        }}
                         onPress={() => selectInstance(i)}
                         activeOpacity={0.7}
                       >
@@ -424,8 +448,8 @@ export default function TeacherDashboard({ route, navigation }) {
                             style={styles.historyStats}
                             onPress={() => navigation.navigate('AttendanceReport', { sessionId: h._id, subjectName: h.subjectName })}
                           >
-                            <Text style={styles.historyStatTxt}>View</Text>
-                            <Text style={styles.historyStatLabel}>Report</Text>
+                            <Text style={styles.historyStatTxt}>{h.present}/{h.total}</Text>
+                            <Text style={styles.historyStatLabel}>Present</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
