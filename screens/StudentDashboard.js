@@ -64,6 +64,7 @@ export default function StudentDashboard({ route, navigation }) {
   const [subjectStats, setSubjectStats] = useState([]);
   const [showProfile, setShowProfile] = useState(false);
   const [missedDatesStore, setMissedDatesStore] = useState([]);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   // Calendar State
   const today = new Date();
@@ -377,13 +378,17 @@ export default function StudentDashboard({ route, navigation }) {
 
           <View style={styles.statsLayout}>
             <View style={styles.statsLeft}>
-              <GlassCard style={styles.mainStatCard}>
+              <GlassCard style={styles.mainStatCard} onPress={() => setShowStatsModal(true)}>
                 <View style={[styles.statIconWrap, { backgroundColor: '#D1FAE5' }]}>
                   <MaterialCommunityIcons name="chart-arc" size={26} color={COLORS.primaryStart} />
                 </View>
                 <View>
                   <Text style={styles.mainStatValue}>{stats.attendancePercentage}%</Text>
                   <Text style={styles.statLabel}>Attendance</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
+                  <MaterialCommunityIcons name="gesture-tap" size={14} color={COLORS.textLight} />
+                  <Text style={{ fontSize: 11, color: COLORS.textLight, fontWeight: '600' }}>Tap for details</Text>
                 </View>
               </GlassCard>
             </View>
@@ -455,11 +460,11 @@ export default function StudentDashboard({ route, navigation }) {
             <Text style={styles.subjectsTitle}>Subjects Breakdown</Text>
             {subjectStats.map((subj, i) => (
               <View key={i} style={styles.subjRow}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={styles.subjName}>{subj.name}</Text>
-                  <Text style={[styles.subjPct, { color: subj.color }]}>{subj.percentage}%</Text>
+                <Text style={styles.subjName} numberOfLines={1}>{subj.name}</Text>
+                <View style={styles.subjTrack}>
+                  <View style={[styles.subjFill, { width: `${subj.percentage}%`, backgroundColor: subj.color }]} />
                 </View>
-                <View style={styles.subjTrack}><View style={[styles.subjFill, { width: `${subj.percentage}%`, backgroundColor: subj.color }]} /></View>
+                <Text style={[styles.subjPct, { color: subj.color }]}>{subj.percentage}%</Text>
               </View>
             ))}
           </GlassCard>
@@ -534,7 +539,13 @@ export default function StudentDashboard({ route, navigation }) {
                    <Text style={{ color: '#1E293B', fontWeight: '800' }}>Sec {profile?.section}</Text>
                 </View>
              </View>
-             <TouchableOpacity style={{ backgroundColor: '#FEF2F2', padding: 18, borderRadius: 16, marginTop: 25, alignItems: 'center' }} onPress={() => navigation.replace('Login')}>
+             <TouchableOpacity 
+                style={{ backgroundColor: '#FEF2F2', padding: 18, borderRadius: 16, marginTop: 25, alignItems: 'center' }} 
+                onPress={async () => {
+                  await SafeStorage.clear();
+                  navigation.replace('Login');
+                }}
+             >
                 <Text style={{ color: '#EF4444', fontWeight: '800', fontSize: 16 }}>Sign Out</Text>
              </TouchableOpacity>
           </View>
@@ -581,6 +592,80 @@ export default function StudentDashboard({ route, navigation }) {
           </View>
         </View>
       </Modal>
+
+      {/* Attendance Stats Detail Modal */}
+      <Modal visible={showStatsModal} transparent animationType="slide">
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowStatsModal(false)} />
+          <View style={{ backgroundColor: '#FFF', borderTopLeftRadius: 35, borderTopRightRadius: 35, padding: 28, paddingBottom: insets.bottom + 30, maxHeight: height * 0.82 }}>
+            <View style={{ width: 50, height: 6, backgroundColor: '#E2E8F0', borderRadius: 3, alignSelf: 'center', marginBottom: 22 }} />
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#1E293B', marginBottom: 6 }}>📊 Attendance Breakdown</Text>
+              <Text style={{ fontSize: 13, color: '#64748B', marginBottom: 24, fontWeight: '600' }}>Updated weekly — refreshes every Monday</Text>
+
+              {/* Overall */}
+              <View style={{ backgroundColor: '#F0FDF4', borderRadius: 20, padding: 20, marginBottom: 20, borderWidth: 1, borderColor: '#BBF7D0' }}>
+                <Text style={{ fontSize: 12, color: '#059669', fontWeight: '800', letterSpacing: 1, marginBottom: 4 }}>OVERALL ATTENDANCE</Text>
+                <Text style={{ fontSize: 52, fontWeight: '900', color: '#059669', letterSpacing: -2 }}>{stats.attendancePercentage}%</Text>
+                <Text style={{ fontSize: 13, color: '#64748B', marginTop: 4, fontWeight: '600' }}>{stats.classesAttended} total classes attended</Text>
+              </View>
+
+              {/* This Week */}
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#1E293B', marginBottom: 14 }}>This Week</Text>
+              {(() => {
+                const now = new Date();
+                const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
+                const weekLogs = history.filter(h => new Date(h.timestamp) >= startOfWeek);
+                const weekDays = [...new Set(weekLogs.map(h => new Date(h.timestamp).toDateString()))];
+                return (
+                  <View style={{ backgroundColor: '#F8FAFC', borderRadius: 16, padding: 18, marginBottom: 20, borderWidth: 1, borderColor: '#F1F5F9' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
+                      <Text style={{ color: '#64748B', fontWeight: '700' }}>Classes This Week</Text>
+                      <Text style={{ color: '#1E293B', fontWeight: '900', fontSize: 20 }}>{weekLogs.length}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {['S','M','T','W','T','F','S'].map((day, idx) => {
+                        const d = new Date(startOfWeek); d.setDate(startOfWeek.getDate() + idx);
+                        const attended = weekDays.includes(d.toDateString());
+                        const isToday = d.toDateString() === now.toDateString();
+                        return (
+                          <View key={idx} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+                            <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: attended ? '#10B981' : isToday ? '#DBEAFE' : '#F1F5F9', alignItems: 'center', justifyContent: 'center', borderWidth: isToday && !attended ? 2 : 0, borderColor: '#3B82F6' }}>
+                              <MaterialCommunityIcons name={attended ? 'check' : 'minus'} size={16} color={attended ? '#FFF' : '#94A3B8'} />
+                            </View>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: isToday ? '#3B82F6' : '#94A3B8' }}>{day}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* This Month */}
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#1E293B', marginBottom: 14 }}>This Month — {new Date().toLocaleString('default', { month: 'long' })}</Text>
+              {(() => {
+                const now = new Date();
+                const monthLogs = history.filter(h => { const d = new Date(h.timestamp); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); });
+                const pct = stats.classesAttended > 0 ? Math.min(100, Math.round((monthLogs.length / stats.classesAttended) * 100)) : 0;
+                return (
+                  <View style={{ backgroundColor: '#F8FAFC', borderRadius: 16, padding: 18, marginBottom: 10, borderWidth: 1, borderColor: '#F1F5F9' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <Text style={{ color: '#64748B', fontWeight: '700' }}>Monthly Classes</Text>
+                      <Text style={{ color: '#1E293B', fontWeight: '900', fontSize: 20 }}>{monthLogs.length}</Text>
+                    </View>
+                    <View style={{ height: 10, backgroundColor: '#E2E8F0', borderRadius: 5, overflow: 'hidden', marginBottom: 8 }}>
+                      <View style={{ height: '100%', width: `${pct}%`, backgroundColor: '#10B981', borderRadius: 5 }} />
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>{monthLogs.length} of {stats.classesAttended} total classes this month ({pct}%)</Text>
+                  </View>
+                );
+              })()}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -635,11 +720,11 @@ const styles = StyleSheet.create({
   calMissedTxt: { color: COLORS.accentRed, fontWeight: '800' },
   subjectsCard: { marginBottom: 20 },
   subjectsTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textDark, marginBottom: 18 },
-  subjRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  subjName: { width: 100, fontSize: 13, fontWeight: '700', color: COLORS.textDark },
+  subjRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 10 },
+  subjName: { width: 70, fontSize: 13, fontWeight: '700', color: COLORS.textDark },
   subjTrack: { flex: 1, height: 10, backgroundColor: '#F1F5F9', borderRadius: 5, overflow: 'hidden' },
   subjFill: { height: '100%', borderRadius: 5 },
-  subjPct: { width: 45, textAlign: 'right', fontSize: 13, fontWeight: '800', color: COLORS.textDark },
+  subjPct: { width: 42, textAlign: 'right', fontSize: 13, fontWeight: '800' },
   scannerSheet: { position: 'absolute', left: 0, right: 0, top: 0, height: height, zIndex: 1000 },
   sheetBackdrop: { position: 'absolute', top: -height, left: 0, right: 0, height: height * 2, backgroundColor: 'rgba(15, 23, 42, 0.4)' },
   scannerContent: { position: 'absolute', bottom: 0, left: 0, right: 0, height: height, backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 20 },
@@ -669,8 +754,8 @@ const styles = StyleSheet.create({
   infoCard: { padding: 20, marginBottom: 20, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 20 },
   infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 10 },
   infoText: { fontSize: 15, color: COLORS.textDark, fontWeight: '600' },
-  infoBadge: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#E2E8F0', marginTop: 10 },
-  infoBadgeText: { fontSize: 12, fontWeight: '800', color: COLORS.textDark, letterSpacing: 1 },
+  infoBadge: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#D1FAE5', marginTop: 10 },
+  infoBadgeText: { fontSize: 12, fontWeight: '800', color: '#059669', letterSpacing: 1 },
   closeModalBtn: { backgroundColor: COLORS.textDark, paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
   closeModalTxt: { color: COLORS.white, fontSize: 16, fontWeight: '800' }
 });

@@ -43,7 +43,6 @@ const MascotAnimation = React.memo(({ length, isKeyboardVisible }) => {
   const requestRef = useRef();
 
   useEffect(() => {
-    // Target frame 89 if length > 0, else frame 0
     targetRef.current = length > 0 ? 89 : 0;
     let lastTime = Date.now();
 
@@ -53,14 +52,10 @@ const MascotAnimation = React.memo(({ length, isKeyboardVisible }) => {
       lastTime = now;
 
       if (frameRef.current !== targetRef.current) {
-        let diff = targetRef.current - frameRef.current;
-
-        // 89 frames in exactly 2000ms -> 89 / 2000 frames per ms (Delta Time)
-        const stepRate = 89 / 2000;
+        const stepRate = 89 / 2000; // 89 frames over 2000ms
+        const diff = targetRef.current - frameRef.current;
         let step = Math.sign(diff) * Math.min(Math.abs(diff), stepRate * dt);
-
         frameRef.current += step;
-
         if (Math.abs(targetRef.current - frameRef.current) < 0.5) {
           frameRef.current = targetRef.current;
         }
@@ -68,31 +63,23 @@ const MascotAnimation = React.memo(({ length, isKeyboardVisible }) => {
       }
       requestRef.current = requestAnimationFrame(animate);
     };
+
     requestRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(requestRef.current);
   }, [length]);
 
-  // Sliding window of +/- 8 frames to balance memory vs GPU rendering
-  const windowRadius = 8;
-  const startIndex = Math.max(0, currentFrame - windowRadius);
-  const endIndex = Math.min(mascotFrames.length - 1, currentFrame + windowRadius);
-
-  const visibleFrames = [];
-  for (let i = startIndex; i <= endIndex; i++) {
-    visibleFrames.push(i);
-  }
-
   return (
     <View style={[styles.mascotContainer, isKeyboardVisible && styles.mascotContainerEnlarged]}>
-      {/* Backing pads rendered FIRST so they are UNDER the mascot */}
+      {/* Backing pads */}
       <View style={[styles.blueMascotBacking, isKeyboardVisible && styles.blueMascotBackingEnlarged]} />
       <View style={[styles.greenMascotBacking, isKeyboardVisible && styles.greenMascotBackingEnlarged]} />
 
-      {/* Sliding Window Opacity Stack */}
-      {visibleFrames.map((index) => (
+      {/* ALL 90 frames permanently mounted with FIXED keys - they NEVER unmount/remount.
+          Only opacity flips between 0 and 1. No decode lag. No native driver interpolation gaps. */}
+      {mascotFrames.map((frame, index) => (
         <Image
           key={`fixed-frame-${index}`}
-          source={mascotFrames[index]}
+          source={frame}
           style={[
             styles.mascotImage,
             { position: 'absolute', opacity: index === currentFrame ? 1 : 0, zIndex: 10 }
