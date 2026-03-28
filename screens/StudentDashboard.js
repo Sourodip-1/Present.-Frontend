@@ -61,6 +61,7 @@ export default function StudentDashboard({ route, navigation }) {
   const [nearbyDevices, setNearbyDevices] = useState([]);
   const [radarLoop, setRadarLoop] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
+  const [subjectStats, setSubjectStats] = useState([]);
 
   // Calendar State
   const today = new Date();
@@ -113,6 +114,14 @@ export default function StudentDashboard({ route, navigation }) {
           streak: streakCount,
           classesAttended: attendedCount
         });
+
+        if (data.subjectStats) {
+          const colors = [COLORS.accentBlue, COLORS.primaryStart, '#8B5CF6', '#F59E0B', '#EF4444', '#10B981'];
+          const breakdown = Object.keys(data.subjectStats).map((name, i) => {
+             return { name, count: data.subjectStats[name], color: colors[i % colors.length] };
+          });
+          setSubjectStats(breakdown);
+        }
       }
     } catch (err) { console.log('Data fetch error', err); }
   }
@@ -125,8 +134,8 @@ export default function StudentDashboard({ route, navigation }) {
     .filter(h => new Date(h.timestamp).getMonth() === currentMonth && new Date(h.timestamp).getFullYear() === currentYear)
     .map(h => new Date(h.timestamp).getDate());
 
-  // Fixed Mock data for visual parity
-  const MISSED_DAYS = [4, 12, 18];
+  // Dynamically pulled attended days, leaving missed empty if we can't fetch them from history
+  const MISSED_DAYS = [];
 
 
   // Scanner Sheet State & PanResponder
@@ -502,20 +511,22 @@ export default function StudentDashboard({ route, navigation }) {
 
           <GlassCard style={styles.subjectsCard}>
             <Text style={styles.subjectsTitle}>Subjects Breakdown</Text>
-            {[
-              { name: 'Mathematics', pct: 82, color: COLORS.accentBlue },
-              { name: 'Physics', pct: 74, color: COLORS.primaryStart },
-              { name: 'Chemistry', pct: 91, color: '#8B5CF6' },
-              { name: 'Programming', pct: 67, color: '#F59E0B' },
-            ].map((subj, i) => (
-              <View key={i} style={styles.subjRow}>
-                <Text style={styles.subjName}>{subj.name}</Text>
-                <View style={styles.subjTrack}>
-                  <View style={[styles.subjFill, { width: `${subj.pct}%`, backgroundColor: subj.color }]} />
-                </View>
-                <Text style={[styles.subjPct, { color: subj.color }]}>{subj.pct}%</Text>
-              </View>
-            ))}
+            {subjectStats.length === 0 ? (
+              <Text style={{ color: COLORS.textGray, fontSize: 13 }}>No class attendance data yet.</Text>
+            ) : (
+              subjectStats.map((subj, i) => {
+                const maxCount = Math.max(...subjectStats.map(s => s.count), 1);
+                return (
+                  <View key={i} style={styles.subjRow}>
+                    <Text style={styles.subjName}>{subj.name}</Text>
+                    <View style={styles.subjTrack}>
+                      <View style={[styles.subjFill, { width: `${(subj.count / maxCount) * 100}%`, backgroundColor: subj.color }]} />
+                    </View>
+                    <Text style={[styles.subjPct, { color: subj.color }]}>{subj.count}</Text>
+                  </View>
+                );
+              })
+            )}
           </GlassCard>
 
         </ScrollView>

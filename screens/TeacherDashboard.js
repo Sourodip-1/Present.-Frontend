@@ -61,6 +61,11 @@ export default function TeacherDashboard({ route, navigation }) {
   
   // Custom Picker State
   const [pickerConfig, setPickerConfig] = useState({ visible: false, type: '', options: [], title: '' });
+  
+  // Custom Premium Alert Modal State
+  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'success', buttons: [] });
+  // Custom Premium Action Sheet State
+  const [actionSheetConfig, setActionSheetConfig] = useState({ visible: false, title: '', options: [] });
 
   const openPicker = (type, title, options) => {
     setPickerConfig({ visible: true, type, title, options });
@@ -160,12 +165,12 @@ export default function TeacherDashboard({ route, navigation }) {
     setClassroom(inst.classroom || '');
     setRollStart(inst.rollStart?.toString() || '');
     setRollEnd(inst.rollEnd?.toString() || '');
-    Alert.alert('Preset Loaded ✅', `Ready to broadcast ${inst.subjectName}`);
+    setAlertConfig({ visible: true, title: 'Preset Loaded', message: `Ready to broadcast ${inst.subjectName}`, type: 'success', buttons: [{text: 'Awesome'}] });
   }
 
   async function saveInstance() {
     if (!subjectName || !department || !semester || !section || !year || !classroom || !rollStart || !rollEnd) {
-      Alert.alert('Error', 'Please fill all class details.');
+      setAlertConfig({ visible: true, title: 'Missing Fields', message: 'Please fill all class details to save as preset.', type: 'error', buttons: [{text: 'Got it'}] });
       return;
     }
     const autoName = `${subjectName} - ${department} ${section} (Sem ${semester}, Room ${classroom})`;
@@ -180,44 +185,62 @@ export default function TeacherDashboard({ route, navigation }) {
         })
       });
       if (response.ok) {
-        Alert.alert('Preset Saved! 💾', `Class profile successfully stored in the cloud.`);
+        setAlertConfig({ visible: true, title: 'Preset Saved!', message: 'Class profile successfully stored in the cloud.', type: 'success', buttons: [{text: 'Done'}] });
         fetchInstances();
       } else {
         const result = await response.json();
-        Alert.alert('Server Error', result.error || 'Failed to push to database.');
+        setAlertConfig({ visible: true, title: 'Server Error', message: result.error || 'Failed to push to database.', type: 'error', buttons: [{text: 'OK'}] });
       }
     } catch (err) {
-      Alert.alert('Network Error', 'Could not reach the database.');
+      setAlertConfig({ visible: true, title: 'Network Error', message: 'Could not reach the database.', type: 'error', buttons: [{text: 'OK'}] });
     }
   }
 
   function deleteInstance(id) {
-    Alert.alert('Delete Preset', 'Are you sure you want to delete this preset?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        try {
-          const res = await fetch(`http://10.43.242.77:3000/api/instances/${id}`, { method: 'DELETE' });
-          if (res.ok) {
-            fetchInstances();
-            if (activeInstanceId === id) {
-               setActiveInstanceId(null);
-               setSubjectName(''); setDepartment(''); setYear(''); setSemester(''); setSection(''); setClassroom(''); setRollStart(''); setRollEnd('');
+    setAlertConfig({
+      visible: true,
+      title: 'Delete Preset',
+      message: 'Are you sure you want to permanently delete this template?',
+      type: 'error',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            const res = await fetch(`http://10.43.242.77:3000/api/instances/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+              fetchInstances();
+              if (activeInstanceId === id) {
+                 setActiveInstanceId(null);
+                 setSubjectName(''); setDepartment(''); setYear(''); setSemester(''); setSection(''); setClassroom(''); setRollStart(''); setRollEnd('');
+              }
             }
-          }
-        } catch (e) { }
-      }}
-    ]);
+          } catch (e) { }
+        }}
+      ]
+    });
   }
+
+  const openPresetOptions = (preset) => {
+    setActionSheetConfig({
+      visible: true,
+      title: `${preset.subjectName} Options`,
+      options: [
+        { text: 'Load Details', icon: 'file-download-outline', onPress: () => selectInstance(preset) },
+        { text: 'View History', icon: 'clock-outline', onPress: () => navigation.navigate('ClassHistory', { instanceId: preset._id, instanceName: preset.subjectName }) },
+        { text: 'Delete Template', icon: 'trash-can-outline', destructive: true, onPress: () => deleteInstance(preset._id) }
+      ]
+    });
+  };
 
   async function startAttendance() {
     if (!subjectName || !department || !semester || !section || !year || !classroom || !rollStart || !rollEnd) {
-      Alert.alert('Error', 'All fields are required to start a session.');
+      setAlertConfig({ visible: true, title: 'Missing Fields', message: 'All fields are required to start a broadcasting session.', type: 'error', buttons: [{text: 'OK'}] });
       return;
     }
     if (Platform.OS === 'android') {
       const g = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE);
       if (g !== PermissionsAndroid.RESULTS.GRANTED && Platform.Version >= 31) {
-        Alert.alert('Permissions Error', 'Teacher advertising requires Bluetooth permissions.');
+        setAlertConfig({ visible: true, title: 'Permissions Error', message: 'Teacher advertising requires Bluetooth permissions.', type: 'error', buttons: [{text: 'OK'}] });
         return;
       }
     }
@@ -243,7 +266,7 @@ export default function TeacherDashboard({ route, navigation }) {
         advertiser.setCompanyId(0xFF);
         await advertiser.broadcast(CLASS_UUID, [data.hardwareMajor || 12, 1], {});
       }
-    } catch (err) { Alert.alert('Hardware Error', 'Ensure Bluetooth is ON.'); }
+    } catch (err) { setAlertConfig({ visible: true, title: 'Hardware Error', message: 'Ensure Bluetooth is ON to broadcast clearly.', type: 'error', buttons: [{text: 'OK'}] }); }
   }
 
   async function endAttendance() {
@@ -254,7 +277,7 @@ export default function TeacherDashboard({ route, navigation }) {
     setIsLive(false);
     setStatusText('Off-Air');
     setActiveSessionId(null);
-    Alert.alert('Attendance Completed', 'The session is closed and synchronized.');
+    setAlertConfig({ visible: true, title: 'Session Closed', message: 'The session has successfully ended and attendance logs are saved.', type: 'success', buttons: [{text: 'Done'}] });
   }
 
   return (
@@ -303,7 +326,13 @@ export default function TeacherDashboard({ route, navigation }) {
                 {activeSessionId && (
                   <TouchableOpacity 
                     style={styles.viewReportAction} 
-                    onPress={() => navigation.navigate('AttendanceReport', { sessionId: activeSessionId, subjectName })}
+                    onPress={() => {
+                      if (activeSessionId) {
+                        navigation.navigate('AttendanceReport', { sessionId: activeSessionId, subjectName });
+                      } else {
+                        setAlertConfig({ visible: true, title: 'No Session', message: 'Start an attendance session first to generate a live report.', type: 'error', buttons: [{text: 'Got it'}] });
+                      }
+                    }}
                     activeOpacity={0.7}
                   >
                     <MaterialCommunityIcons name="chart-box-outline" size={20} color="#2563EB" />
@@ -398,24 +427,26 @@ export default function TeacherDashboard({ route, navigation }) {
                       <TouchableOpacity 
                         key={i._id} 
                         style={[styles.compactCard, isActive && styles.activeCompactCard]} 
-                        onLongPress={() => {
-                          Alert.alert('Manage Preset', `Options for ${i.subjectName}`, [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Load', onPress: () => selectInstance(i) },
-                            { text: 'Delete', style: 'destructive', onPress: () => deleteInstance(i._id) }
-                          ]);
-                        }}
+                        onLongPress={() => openPresetOptions(i)}
                         onPress={() => selectInstance(i)}
                         activeOpacity={0.7}
                       >
-                        <View style={[styles.cardIndicator, isActive && { backgroundColor: '#FFF' }]} />
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                          <View style={[styles.cardIndicator, isActive && { backgroundColor: '#FFF', marginBottom: 0 }]} />
+                          
+                          {isActive && (
+                            <View style={styles.activeCheck}>
+                              <MaterialCommunityIcons name="check-circle" size={16} color="#FFF" />
+                            </View>
+                          )}
+                          
+                          <TouchableOpacity onPress={() => openPresetOptions(i)} style={{ padding: 4 }}>
+                            <MaterialCommunityIcons name="dots-horizontal" size={22} color={isActive ? '#FFF' : '#94A3B8'} />
+                          </TouchableOpacity>
+                        </View>
+                        
                         <Text style={[styles.cardTitle, isActive && { color: '#FFF' }]} numberOfLines={1}>{i.subjectName}</Text>
                         <Text style={[styles.cardSub, isActive && { color: 'rgba(255,255,255,0.8)' }]}>{i.section} • Sem {i.semester}</Text>
-                        {isActive && (
-                          <View style={styles.activeCheck}>
-                            <MaterialCommunityIcons name="check-circle" size={18} color="#FFF" />
-                          </View>
-                        )}
                       </TouchableOpacity>
                     );
                   })
@@ -470,6 +501,62 @@ export default function TeacherDashboard({ route, navigation }) {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Premium Alert Modal */}
+      <Modal visible={alertConfig.visible} transparent animationType="fade">
+        <View style={styles.modalOverlayFlexCenter}>
+          <View style={styles.premiumAlertBox}>
+            <View style={[styles.alertIconWrap, alertConfig.type === 'error' ? styles.alertIconError : styles.alertIconSuccess]}>
+               <MaterialCommunityIcons name={alertConfig.type === 'error' ? 'alert' : 'check'} size={40} color="#FFF" />
+            </View>
+            <Text style={styles.alertTitle}>{alertConfig.title}</Text>
+            <Text style={styles.alertMessage}>{alertConfig.message}</Text>
+            <View style={styles.alertBtnStack}>
+              {alertConfig.buttons.map((btn, i) => (
+                <TouchableOpacity 
+                  key={i} 
+                  style={[styles.alertBtn, btn.style === 'destructive' && styles.alertBtnDestructive, btn.style === 'cancel' && styles.alertBtnCancel]} 
+                  onPress={() => { setAlertConfig({ ...alertConfig, visible: false }); if(btn.onPress) btn.onPress(); }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.alertBtnTxt, btn.style === 'destructive' && styles.alertBtnTxtDestructive, btn.style === 'cancel' && styles.alertBtnTxtCancel]}>{btn.text}</Text>
+                </TouchableOpacity>
+              ))}
+              {alertConfig.buttons.length === 0 && (
+                <TouchableOpacity style={styles.alertBtn} onPress={() => setAlertConfig({ ...alertConfig, visible: false })} activeOpacity={0.8}>
+                  <Text style={styles.alertBtnTxt}>OK</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Premium Action Sheet */}
+      <Modal visible={actionSheetConfig.visible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setActionSheetConfig({...actionSheetConfig, visible: false})} />
+          <View style={[styles.actionSheetContent, { paddingBottom: insets.bottom + 30 }]}>
+            <View style={styles.dragHandle} />
+            <Text style={styles.actionSheetTitle}>{actionSheetConfig.title}</Text>
+            
+            {actionSheetConfig.options.map((opt, i) => (
+              <TouchableOpacity 
+                key={i} 
+                style={styles.actionSheetOption} 
+                onPress={() => {
+                  setActionSheetConfig({...actionSheetConfig, visible: false});
+                  if(opt.onPress) opt.onPress();
+                }}
+                activeOpacity={0.6}
+              >
+                <MaterialCommunityIcons name={opt.icon} size={26} color={opt.destructive ? '#EF4444' : '#1E293B'} />
+                <Text style={[styles.actionSheetOptionTxt, opt.destructive && {color: '#EF4444'}]}>{opt.text}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
 
       {/* Custom Picker Modal */}
       <Modal visible={pickerConfig.visible} transparent animationType="fade">
@@ -566,10 +653,10 @@ const styles = StyleSheet.create({
   cardsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 30 },
   compactCard: { width: (width - 52) / 2, backgroundColor: '#FFF', borderRadius: 18, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.03, elevation: 1 },
   activeCompactCard: { backgroundColor: '#2563EB', borderColor: '#2563EB', shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 10 },
-  cardIndicator: { width: 30, height: 4, backgroundColor: '#2563EB', borderRadius: 2, marginBottom: 15 },
+  cardIndicator: { width: 30, height: 4, backgroundColor: '#2563EB', borderRadius: 2 },
   cardTitle: { fontSize: 15, fontWeight: '700', color: '#1E293B', marginBottom: 4 },
   cardSub: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  activeCheck: { position: 'absolute', top: 15, right: 15 },
+  activeCheck: { position: 'absolute', top: 6, right: '40%' },
   emptyText: { color: '#94A3B8', fontStyle: 'italic', fontSize: 13, marginLeft: 5 },
   
   viewReportAction: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#DBEAFE', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 20, marginTop: 25 },
@@ -605,5 +692,26 @@ const styles = StyleSheet.create({
   optionBtn: { width: '22%', backgroundColor: '#F8FAFC', paddingVertical: 15, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#F1F5F9' },
   optionBtnSelected: { backgroundColor: '#DBEAFE', borderColor: '#3B82F6' },
   optionTxt: { fontSize: 18, fontWeight: '700', color: '#64748B' },
-  optionTxtSelected: { color: '#2563EB' }
+  optionTxtSelected: { color: '#2563EB' },
+  
+  modalOverlayFlexCenter: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 25 },
+  premiumAlertBox: { width: '100%', backgroundColor: '#FFF', borderRadius: 32, padding: 30, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 15 }, shadowOpacity: 0.15, shadowRadius: 35, elevation: 15 },
+  alertIconWrap: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 25 },
+  alertIconSuccess: { backgroundColor: '#10B981', shadowColor: '#10B981', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 15, elevation: 10 },
+  alertIconError: { backgroundColor: '#EF4444', shadowColor: '#EF4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 15, elevation: 10 },
+  alertTitle: { fontSize: 24, fontWeight: '900', color: '#1E293B', marginBottom: 12, textAlign: 'center', letterSpacing: -0.5 },
+  alertMessage: { fontSize: 16, color: '#64748B', fontWeight: '500', textAlign: 'center', marginBottom: 35, lineHeight: 24 },
+  alertBtnStack: { width: '100%', gap: 12 },
+  alertBtn: { width: '100%', backgroundColor: '#2563EB', paddingVertical: 18, borderRadius: 18, alignItems: 'center', shadowColor: '#2563EB', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6 },
+  alertBtnTxt: { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+  alertBtnCancel: { backgroundColor: '#F1F5F9', shadowOpacity: 0, elevation: 0 },
+  alertBtnTxtCancel: { color: '#64748B' },
+  alertBtnDestructive: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', shadowOpacity: 0, elevation: 0 },
+  alertBtnTxtDestructive: { color: '#EF4444' },
+
+  actionSheetContent: { backgroundColor: '#FFF', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 25, shadowColor: '#000', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 15 },
+  dragHandle: { width: 50, height: 6, backgroundColor: '#E2E8F0', borderRadius: 3, alignSelf: 'center', marginBottom: 25 },
+  actionSheetTitle: { fontSize: 13, fontWeight: '900', color: '#64748B', marginBottom: 20, textAlign: 'center', letterSpacing: 2, textTransform: 'uppercase' },
+  actionSheetOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#F8FAFC' },
+  actionSheetOptionTxt: { fontSize: 17, fontWeight: '700', color: '#1E293B', marginLeft: 16 }
 });

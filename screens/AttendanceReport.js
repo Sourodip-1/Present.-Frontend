@@ -52,23 +52,26 @@ export default function AttendanceReport({ route, navigation }) {
       setReport(data);
       setReport(data);
     } catch (err) {
-      console.log('Report Error, using dummy data');
-      setReport({
-        sessionInfo: { subjectName: subjectName || 'Subject', date: new Date().toISOString(), rollStart: 1, rollEnd: 60 },
-        stats: { percentage: 75, presentCount: 45, totalExpected: 60 },
-        presentStudents: [
-          { rollNo: 1, name: 'Alice Smith' },
-          { rollNo: 2, name: 'Bob Johnson' },
-          { rollNo: 5, name: 'Charlie Davis' }
-        ],
-        absentees: ['003', '004', '006']
-      });
+      console.log('Report Error:', err);
+      // Removed dummy data fallback entirely to ensure all data is from the database.
+      setReport({ error: true });
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return <ActivityIndicator size="large" style={{ flex: 1 }} color="#2563EB" />;
+  if (loading) return <ActivityIndicator size="large" style={{ flex: 1, backgroundColor: '#FFF' }} color="#2563EB" />;
+  if (report?.error) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#EF4444" />
+        <Text style={{ marginTop: 16, fontSize: 16, color: '#64748B' }}>Could not load attendance report.</Text>
+        <TouchableOpacity style={{ marginTop: 20, padding: 12, backgroundColor: '#2563EB', borderRadius: 8 }} onPress={() => navigation.goBack()}>
+          <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function ClassHistory({ route, navigation }) {
   const { instanceId = 'dm1', instanceName = 'Class' } = route?.params || {};
@@ -24,7 +25,14 @@ export default function ClassHistory({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>{instanceName} History</Text>
+      <View style={styles.headerRow}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#1C1C1E" />
+        </TouchableOpacity>
+        <Text style={styles.header}>{instanceName}</Text>
+        <View style={{ width: 44 }} />
+      </View>
+      <Text style={styles.subHeader}>Template History</Text>
       
       {loading ? (
         <ActivityIndicator size="large" color="#007AFF" />
@@ -35,7 +43,7 @@ export default function ClassHistory({ route, navigation }) {
           renderItem={({ item }) => (
             <TouchableOpacity 
               style={styles.sessionCard}
-              onPress={() => navigation.navigate('AttendanceReport', { sessionId: item._id })}
+              onPress={() => navigation.navigate('AttendanceReport', { sessionId: item._id, subjectName: item.subjectName || instanceName })}
             >
               <View>
                 <Text style={styles.dateText}>{new Date(item.startTime).toLocaleDateString()}</Text>
@@ -55,7 +63,10 @@ export default function ClassHistory({ route, navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 25, backgroundColor: '#F8F9FA' },
-  header: { fontSize: 24, fontWeight: '900', color: '#1C1C1E', marginBottom: 25, marginTop: 20 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 },
+  backButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },
+  header: { fontSize: 24, fontWeight: '900', color: '#1C1C1E' },
+  subHeader: { fontSize: 13, fontWeight: '700', color: '#8E8E93', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 25, textAlign: 'center' },
   sessionCard: { 
     backgroundColor: '#fff', 
     padding: 20, 
