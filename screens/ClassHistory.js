@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import API_URL from '../config';
 
 export default function ClassHistory({ route, navigation }) {
   const { instanceId = 'dm1', instanceName = 'Class' } = route?.params || {};
@@ -13,7 +14,7 @@ export default function ClassHistory({ route, navigation }) {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`http://10.43.242.77:3000/api/instances/${instanceId}/history`);
+      const response = await fetch(`${API_URL}/api/instances/${instanceId}/history`);
       const data = await response.json();
       setSessions(data);
     } catch (err) {

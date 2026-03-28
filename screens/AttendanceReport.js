@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, Dimensions, StatusBar } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import API_URL from '../config';
 import MeshGradient from '../components/MeshGradient';
 
 const { width, height } = Dimensions.get('window');
@@ -32,7 +33,7 @@ export default function AttendanceReport({ route, navigation }) {
 
   const fetchReport = async () => {
     try {
-      const response = await fetch(`http://10.43.242.77:3000/api/sessions/${sessionId}/report`);
+      const response = await fetch(`${API_URL}/api/sessions/${sessionId}/report`);
       const data = await response.json();
       
       // --- SMART ABSENTEE CALCULATION ---

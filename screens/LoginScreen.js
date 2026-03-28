@@ -7,6 +7,7 @@ import {
 import SafeStorage from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MeshGradient from '../components/MeshGradient';
+import API_URL from '../config';
 import { mascotFrames } from '../components/MascotFrames';
 
 const { width, height } = Dimensions.get('window');
@@ -134,7 +135,7 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      const response = await fetch('http://10.43.242.77:3000/api/auth/send-otp', {
+      const response = await fetch(`${API_URL}/api/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.toLowerCase() })

@@ -20,6 +20,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SafeStorage from '../utils/storage';
+import API_URL from '../config';
 import MeshGradient from '../components/MeshGradient';
 
 const { width, height } = Dimensions.get('window');
@@ -113,7 +114,7 @@ export default function TeacherDashboard({ route, navigation }) {
   async function fetchInstances() {
     try {
       // 1. Fetch Teacher Profile
-      const pRes = await fetch(`http://10.43.242.77:3000/api/users/${email}`);
+      const pRes = await fetch(`${API_URL}/api/users/${email}`);
       if (pRes.ok) {
         const pData = await pRes.json();
         if (pData && pData.teacherProfile) {
@@ -122,7 +123,7 @@ export default function TeacherDashboard({ route, navigation }) {
       }
 
       // 2. Fetch Class Presets
-      const response = await fetch(`http://10.43.242.77:3000/api/instances/${email}`);
+      const response = await fetch(`${API_URL}/api/instances/${email}`);
       const data = await response.json();
       if (response.ok) {
         setSavedInstances(data || []);
@@ -131,7 +132,7 @@ export default function TeacherDashboard({ route, navigation }) {
         const allHistory = [];
         for (const inst of (data || [])) {
           try {
-            const hRes = await fetch(`http://10.43.242.77:3000/api/instances/${inst._id}/history`);
+            const hRes = await fetch(`${API_URL}/api/instances/${inst._id}/history`);
             if (hRes.ok) {
               const sessions = await hRes.json();
               sessions.forEach(s => allHistory.push({
@@ -183,7 +184,7 @@ export default function TeacherDashboard({ route, navigation }) {
     }
     const autoName = `${subjectName} - ${department} ${section} (Sem ${semester}, Room ${classroom})`;
     try {
-      const response = await fetch('http://10.43.242.77:3000/api/instances/create', {
+      const response = await fetch(`${API_URL}/api/instances/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -214,7 +215,7 @@ export default function TeacherDashboard({ route, navigation }) {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            const res = await fetch(`http://10.43.242.77:3000/api/instances/${id}`, { method: 'DELETE' });
+            const res = await fetch(`${API_URL}/api/instances/${id}`, { method: 'DELETE' });
             if (res.ok) {
               fetchInstances();
               if (activeInstanceId === id) {
@@ -253,7 +254,7 @@ export default function TeacherDashboard({ route, navigation }) {
       }
     }
     try {
-      const response = await fetch('http://10.43.242.77:3000/api/sessions/create', {
+      const response = await fetch(`${API_URL}/api/sessions/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -278,7 +279,7 @@ export default function TeacherDashboard({ route, navigation }) {
   }
 
   async function endAttendance() {
-    if (activeSessionId) await fetch(`http://10.43.242.77:3000/api/sessions/${activeSessionId}/end`, { method: 'PUT' });
+    if (activeSessionId) await fetch(`${API_URL}/api/sessions/${activeSessionId}/end`, { method: 'PUT' });
     let advertiser;
     try { advertiser = require('react-native-ble-advertiser').default; } catch (e) { }
     if (advertiser && typeof advertiser.stopBroadcast === 'function') await advertiser.stopBroadcast(CLASS_UUID);

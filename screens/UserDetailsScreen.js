@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import API_URL from '../config';
 import MeshGradient from '../components/MeshGradient';
 import SafeStorage from '../utils/storage';
 
@@ -89,7 +90,7 @@ export default function UserDetailsScreen({ route, navigation }) {
         }
       };
 
-      const response = await fetch('http://10.43.242.77:3000/api/auth/register-profile', {
+      const response = await fetch(`${API_URL}/api/auth/register-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

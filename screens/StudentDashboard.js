@@ -89,7 +89,7 @@ export default function StudentDashboard({ route, navigation }) {
 
   async function fetchMyRecords() {
     try {
-      const pRes = await fetch(`http://10.43.242.77:3000/api/users/${email}`);
+      const pRes = await fetch(`${API_URL}/api/users/${email}`);
       if (pRes.ok) {
         const pData = await pRes.json();
         if (pData.role === 'student' && pData.studentProfile) {
@@ -108,7 +108,7 @@ export default function StudentDashboard({ route, navigation }) {
         }
       }
 
-      const rRes = await fetch(`http://10.43.242.77:3000/api/records/student/${email}`);
+      const rRes = await fetch(`${API_URL}/api/records/student/${email}`);
       if (rRes.ok) {
         const data = await rRes.json();
         setHistory(data.history || []);
@@ -285,7 +285,7 @@ export default function StudentDashboard({ route, navigation }) {
   const fetchActiveSessions = async (radar) => {
     setIsFetchingSessions(true);
     try {
-      const res = await fetch('http://10.43.242.77:3000/api/sessions/active');
+      const res = await fetch(`${API_URL}/api/sessions/active`);
       if (res.ok) {
         const activeSessions = await res.json();
         if (activeSessions.length === 0) {
@@ -334,7 +334,7 @@ export default function StudentDashboard({ route, navigation }) {
 
     if (!authResult.success) return;
 
-    const apiRes = await fetch('http://10.43.242.77:3000/api/attendance/mark', {
+    const apiRes = await fetch(`${API_URL}/api/attendance/mark`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: device.sessionId, studentEmail: email })

@@ -7,6 +7,7 @@ import {
 import SafeStorage from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import API_URL from '../config';
 import MeshGradient from '../components/MeshGradient';
 
 const { width, height } = Dimensions.get('window');
@@ -78,7 +79,7 @@ export default function OTPScreen({ route, navigation }) {
     }
     setLoading(true);
     try {
-      const response = await fetch('http://10.43.242.77:3000/api/auth/verify-otp', {
+      const response = await fetch(`${API_URL}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code })
