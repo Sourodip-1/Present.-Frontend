@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions,
   ScrollView, Animated, Platform, PermissionsAndroid, StatusBar, Modal,
-  Image, PanResponder, Alert
+  Image, PanResponder, Alert, RefreshControl
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -65,6 +65,7 @@ export default function StudentDashboard({ route, navigation }) {
   const [showProfile, setShowProfile] = useState(false);
   const [missedDatesStore, setMissedDatesStore] = useState([]);
   const [showStatsModal, setShowStatsModal] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Calendar State
   const today = new Date();
@@ -131,6 +132,12 @@ export default function StudentDashboard({ route, navigation }) {
   }
 
   useEffect(() => { fetchMyRecords(); }, []);
+
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await fetchMyRecords();
+    setRefreshing(false);
+  }, []);
 
   const ATTENDED_DAYS = history
     .filter(h => new Date(h.timestamp).getMonth() === currentMonth && new Date(h.timestamp).getFullYear() === currentYear)
@@ -221,7 +228,10 @@ export default function StudentDashboard({ route, navigation }) {
   };
 
   const handleScanInit = async () => {
-    if (attendanceMarked || isScanning) return;
+    if (isScanning) return;
+    if (attendanceMarked) {
+      setAttendanceMarked(false);
+    }
     setShowScanner(true);
     setIsScanning(true);
     setNearbyDevices([]);
@@ -357,7 +367,11 @@ export default function StudentDashboard({ route, navigation }) {
           </View>
         </Animated.View>
 
-        <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]} showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]} 
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primaryStart]} tintColor={COLORS.primaryStart} />}
+        >
           <View style={styles.ctaContainer}>
             <View style={styles.scanWrapper}>
               {!attendanceMarked && (
@@ -366,14 +380,14 @@ export default function StudentDashboard({ route, navigation }) {
                   <Animated.View style={[styles.glowRing, { transform: [{ scale: pulseAnim2 }], opacity: pulseOpac2 }]} />
                 </>
               )}
-              <Pressable onPress={handleScanInit} style={({ pressed }) => [{ transform: [{ scale: pressed && !attendanceMarked ? 0.94 : 1 }] }]}>
+              <Pressable onPress={handleScanInit} style={({ pressed }) => [{ transform: [{ scale: pressed ? 0.94 : 1 }] }]}>
                 <View style={[styles.scanBtn, attendanceMarked && styles.scanBtnDone]}>
                   <MaterialCommunityIcons name={attendanceMarked ? 'check-decagram' : 'bluetooth-connect'} size={50} color={COLORS.white} />
                   <Text style={styles.scanBtnText}>{attendanceMarked ? 'Marked ✓' : 'Scan'}</Text>
                 </View>
               </Pressable>
             </View>
-            <Text style={styles.ctaSub}>Tap to start Hardware Scan</Text>
+            <Text style={styles.ctaSub}>{attendanceMarked ? 'Tap to scan for next class' : 'Tap to start Hardware Scan'}</Text>
           </View>
 
           <View style={styles.statsLayout}>
@@ -504,10 +518,10 @@ export default function StudentDashboard({ route, navigation }) {
             </>
           ) : (
             <View style={styles.successState}>
-              <View style={styles.successIconWrap}><MaterialCommunityIcons name="check-decagram" size={60} color="#10B981" /></View>
+              <View style={styles.successIconWrap}><MaterialCommunityIcons name="check-decagram" size={60} color="#FFFFFF" /></View>
               <Text style={styles.successHead}>You're Marked Present!</Text>
               <Text style={styles.successSub}>Your attendance for the current class is synced.</Text>
-              <TouchableOpacity style={styles.scanBtnSecondary} onPress={() => setAttendanceMarked(false)}>
+              <TouchableOpacity style={styles.scanBtnSecondary} onPress={handleScanInit}>
                 <Text style={styles.scanBtnSecondaryText}>Scan Next Class</Text>
               </TouchableOpacity>
             </View>

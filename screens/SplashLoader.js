@@ -3,23 +3,38 @@ import { View, StyleSheet, Dimensions, Text, ActivityIndicator } from 'react-nat
 
 const { width, height } = Dimensions.get('window');
 
+import SafeStorage from '../utils/storage';
+
 export default function SplashLoader({ navigation }) {
   const navigatedRef = useRef(false);
 
   useEffect(() => {
-    // Pure JS fallback: Just wait 2.5 seconds and navigate
-    const fallbackTimer = setTimeout(() => {
-      completeSplash();
-    }, 2500);
+    const initApp = async () => {
+      try {
+        const savedEmail = await SafeStorage.getItem('userEmail');
+        const savedRole = await SafeStorage.getItem('userRole');
+        
+        // Add a slight delay just so the splash screen doesn't instantly snap
+        await new Promise(r => setTimeout(r, 1500));
 
-    return () => clearTimeout(fallbackTimer);
+        if (navigatedRef.current) return;
+        navigatedRef.current = true;
+
+        if (savedEmail && savedRole && savedRole !== 'unknown') {
+          const targetScreen = savedRole === 'teacher' ? 'TeacherDashboard' : 'StudentDashboard';
+          navigation.replace(targetScreen, { email: savedEmail });
+        } else {
+          navigation.replace('Login');
+        }
+      } catch (err) {
+        if (navigatedRef.current) return;
+        navigatedRef.current = true;
+        navigation.replace('Login');
+      }
+    };
+
+    initApp();
   }, []);
-
-  const completeSplash = () => {
-    if (navigatedRef.current) return;
-    navigatedRef.current = true;
-    navigation.replace('Login');
-  };
 
   return (
     <View style={styles.container}>

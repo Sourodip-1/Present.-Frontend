@@ -7,6 +7,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MeshGradient from '../components/MeshGradient';
+import SafeStorage from '../utils/storage';
 
 const { width, height } = Dimensions.get('window');
 
@@ -96,6 +97,7 @@ export default function UserDetailsScreen({ route, navigation }) {
 
       const data = await response.json();
       if (response.ok) {
+        await SafeStorage.setItem('userRole', role);
         if (role === 'teacher') {
           navigation.navigate('TeacherDashboard', { email });
         } else {

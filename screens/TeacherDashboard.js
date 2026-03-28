@@ -14,7 +14,8 @@ import {
   KeyboardAvoidingView,
   Animated,
   Modal,
-  FlatList
+  FlatList,
+  RefreshControl
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -57,6 +58,7 @@ export default function TeacherDashboard({ route, navigation }) {
   const [classHistory, setClassHistory] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeInstanceId, setActiveInstanceId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
   const timerRef = useRef(null);
   
   // Custom Picker State
@@ -154,6 +156,12 @@ export default function TeacherDashboard({ route, navigation }) {
       setSavedInstances([]);
     }
   }
+
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await fetchInstances();
+    setRefreshing(false);
+  }, []);
 
   function selectInstance(inst) {
     setActiveInstanceId(inst._id);
@@ -302,7 +310,11 @@ export default function TeacherDashboard({ route, navigation }) {
           </View>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <ScrollView 
+          showsVerticalScrollIndicator={false} 
+          contentContainerStyle={styles.scroll}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#2563EB"]} tintColor="#2563EB" />}
+        >
           {!isLive ? (
             <>
               {/* Circular Start Button Section */}
