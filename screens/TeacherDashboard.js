@@ -411,10 +411,24 @@ export default function TeacherDashboard({ route, navigation }) {
                   </View>
                 </View>
 
-                <TouchableOpacity style={styles.saveBtnPremium} onPress={saveInstance} activeOpacity={0.7}>
-                  <MaterialCommunityIcons name="cloud-check" size={22} color="#FFF" />
-                  <Text style={styles.saveBtnText}>SAVE AS PRESET</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 15, marginTop: 25 }}>
+                  <TouchableOpacity style={[styles.saveBtnPremium, { flex: 1, marginTop: 0 }]} onPress={saveInstance} activeOpacity={0.7}>
+                    <MaterialCommunityIcons name="cloud-check" size={22} color="#FFF" />
+                    <Text style={styles.saveBtnText}>SAVE PRESET</Text>
+                  </TouchableOpacity>
+                  {subjectName || department || classroom || activeInstanceId ? (
+                    <TouchableOpacity 
+                      style={[styles.saveBtnPremium, { paddingHorizontal: 20, backgroundColor: '#FEE2E2', marginTop: 0 }]} 
+                      onPress={() => {
+                        setActiveInstanceId(null);
+                        setSubjectName(''); setDepartment(''); setYear(''); setSemester(''); setSection(''); setClassroom(''); setRollStart(''); setRollEnd('');
+                      }} 
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons name="close" size={24} color="#EF4444" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
 
               {/* Presets Grid */}

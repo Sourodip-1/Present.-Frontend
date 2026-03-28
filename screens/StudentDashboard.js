@@ -62,6 +62,8 @@ export default function StudentDashboard({ route, navigation }) {
   const [radarLoop, setRadarLoop] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [subjectStats, setSubjectStats] = useState([]);
+  const [showProfile, setShowProfile] = useState(false);
+  const [missedDatesStore, setMissedDatesStore] = useState([]);
 
   // Calendar State
   const today = new Date();
@@ -83,19 +85,23 @@ export default function StudentDashboard({ route, navigation }) {
   const handlePrevMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
   const handleNextMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
 
-  // Data Fetching
   async function fetchMyRecords() {
     try {
       const pRes = await fetch(`http://10.43.242.77:3000/api/users/${email}`);
       if (pRes.ok) {
         const pData = await pRes.json();
-        // Correctly mapping backend studentProfile to frontend local profile state
-        if (pData && pData.studentProfile) {
+        if (pData.role === 'student' && pData.studentProfile) {
+          const semester = pData.studentProfile.semester || '--';
+          let derivedYear = '--';
+          if (semester !== '--') {
+            derivedYear = Math.ceil(parseInt(semester) / 2).toString();
+          }
           setProfile({
             name: pData.studentProfile.fullName || 'No Name',
             universityRoll: pData.studentProfile.universityRoll || '---',
-            year: pData.studentProfile.year ?? '--',
-            semester: pData.studentProfile.semester ?? '--'
+            semester: semester,
+            section: pData.studentProfile.section || '--',
+            year: derivedYear
           });
         }
       }
@@ -104,21 +110,18 @@ export default function StudentDashboard({ route, navigation }) {
       if (rRes.ok) {
         const data = await rRes.json();
         setHistory(data.history || []);
-
-        let attendedCount = data.history ? data.history.length : 0;
-        let streakCount = data.history ? Math.min(attendedCount, 12) : 0;
-        let pct = attendedCount > 0 ? '100' : '0';
+        if (data.missedDates) setMissedDatesStore(data.missedDates);
 
         setStats({
-          attendancePercentage: pct,
-          streak: streakCount,
-          classesAttended: attendedCount
+          attendancePercentage: data.overallPct || '0',
+          streak: data.streakCount || 0,
+          classesAttended: data.totalAttended || 0
         });
 
-        if (data.subjectStats) {
+        if (data.subjectStats && Array.isArray(data.subjectStats)) {
           const colors = [COLORS.accentBlue, COLORS.primaryStart, '#8B5CF6', '#F59E0B', '#EF4444', '#10B981'];
-          const breakdown = Object.keys(data.subjectStats).map((name, i) => {
-             return { name, count: data.subjectStats[name], color: colors[i % colors.length] };
+          const breakdown = data.subjectStats.map((subj, i) => {
+             return { ...subj, color: colors[i % colors.length] };
           });
           setSubjectStats(breakdown);
         }
@@ -126,19 +129,16 @@ export default function StudentDashboard({ route, navigation }) {
     } catch (err) { console.log('Data fetch error', err); }
   }
 
-  useEffect(() => {
-    fetchMyRecords();
-  }, []);
+  useEffect(() => { fetchMyRecords(); }, []);
 
   const ATTENDED_DAYS = history
     .filter(h => new Date(h.timestamp).getMonth() === currentMonth && new Date(h.timestamp).getFullYear() === currentYear)
     .map(h => new Date(h.timestamp).getDate());
 
-  // Dynamically pulled attended days, leaving missed empty if we can't fetch them from history
-  const MISSED_DAYS = [];
+  const MISSED_DAYS = missedDatesStore
+    .filter(d => new Date(d).getMonth() === currentMonth && new Date(d).getFullYear() === currentYear)
+    .map(d => new Date(d).getDate());
 
-
-  // Scanner Sheet State & PanResponder
   const sheetY = useRef(new Animated.Value(height)).current;
   const lastSheetY = useRef(height);
   const snapPoints = { closed: height, half: height * 0.3, full: 0 };
@@ -155,8 +155,14 @@ export default function StudentDashboard({ route, navigation }) {
       },
       onPanResponderRelease: (_, gesture) => {
         let target = snapPoints.half;
-        if (gesture.dy < -100 || (lastSheetY.current === snapPoints.half && gesture.dy < -20)) target = snapPoints.full;
-        else if (gesture.dy > 100 || (lastSheetY.current === snapPoints.full && gesture.dy > 20)) target = snapPoints.half;
+        if (gesture.dy < -60) target = snapPoints.full;
+        else if (gesture.dy > 60) {
+           if (lastSheetY.current === snapPoints.half) {
+              setShowScanner(false);
+              return;
+           }
+           target = snapPoints.half;
+        }
         lastSheetY.current = target;
         Animated.spring(sheetY, { toValue: target, useNativeDriver: true, tension: 60, friction: 10 }).start();
       },
@@ -215,11 +221,9 @@ export default function StudentDashboard({ route, navigation }) {
 
   const handleScanInit = async () => {
     if (attendanceMarked || isScanning) return;
-
     setShowScanner(true);
     setIsScanning(true);
     setNearbyDevices([]);
-
     const radar = Animated.loop(
       Animated.parallel([
         Animated.timing(radarScale, { toValue: 2.5, duration: 1500, useNativeDriver: true }),
@@ -231,7 +235,6 @@ export default function StudentDashboard({ route, navigation }) {
     radar.start();
     setRadarLoop(radar);
 
-    // --- ATTEMPT REAL BLE SCAN ---
     let bleAvailable = false;
     if (!bleManager) {
       try {
@@ -239,71 +242,41 @@ export default function StudentDashboard({ route, navigation }) {
         bleManager = new BleManager();
         const state = await bleManager.state();
         if (state === 'PoweredOn') bleAvailable = true;
-      } catch (e) {
-        console.log('[BLE] Module not available, falling back to Wi-Fi discovery.');
-      }
+      } catch (e) { console.log('[BLE] Module not available'); }
     } else {
-      try {
-        const state = await bleManager.state();
-        if (state === 'PoweredOn') bleAvailable = true;
-      } catch (e) { }
+      try { const state = await bleManager.state(); if (state === 'PoweredOn') bleAvailable = true; } catch (e) { }
     }
 
     if (bleAvailable) {
-      // Real BLE scan — with manual UUID filtering (more reliable on Android)
       const granted = await requestPermissions();
       if (granted) {
-        console.log('[BLE] Starting broad hardware scan...');
         let foundBeacon = false;
-        
         bleManager.startDeviceScan(null, { allowDuplicates: false }, async (error, device) => {
-          if (error) { 
-            console.log('[BLE] Scan Error:', error.message); 
-            return; 
-          }
+          if (error) return;
           if (device) {
-            // Check if this device is advertising our Class UUID
             const hasClassUUID = device.serviceUUIDs && device.serviceUUIDs.includes(CLASS_UUID);
             const isTargetBeacon = hasClassUUID || (device.localName && device.localName.includes('Present'));
-            
             if (isTargetBeacon && !foundBeacon) {
               foundBeacon = true;
-              console.log('[BLE] Found Teacher Beacon!', device.id);
               bleManager.stopDeviceScan();
               await fetchActiveSessions(radar);
             }
           }
         });
-        
-        // 8s timeout to stop scanning
         setTimeout(async () => {
           if (bleManager) bleManager.stopDeviceScan();
-          if (!foundBeacon) {
-            console.log('[BLE] Timeout: No beacon found. Triggering Wi-Fi fallback...');
-            await fetchActiveSessions(radar);
-          }
+          if (!foundBeacon) await fetchActiveSessions(radar);
         }, 8000);
-      } else {
-         console.log('[SCAN] Permissions denied, using Wi-Fi fallback...');
-         await fetchActiveSessions(radar);
-      }
-    } else {
-      // Wi-Fi Fallback: Directly load active sessions from the server
-      console.log('[SCAN] Using Wi-Fi fallback to discover active sessions...');
-      await fetchActiveSessions(radar);
-      // No timeout needed — fetchActiveSessions handles all cleanup
-    }
+      } else { await fetchActiveSessions(radar); }
+    } else { await fetchActiveSessions(radar); }
   };
 
   const fetchActiveSessions = async (radar) => {
     setIsFetchingSessions(true);
     try {
-      console.log('[SCAN] Fetching active sessions from server...');
       const res = await fetch('http://10.43.242.77:3000/api/sessions/active');
-      console.log('[SCAN] Response status:', res.status);
       if (res.ok) {
         const activeSessions = await res.json();
-        console.log('[SCAN] Active sessions count:', activeSessions.length);
         if (activeSessions.length === 0) {
           setNearbyDevices([]);
           setIsScanning(false);
@@ -311,7 +284,6 @@ export default function StudentDashboard({ route, navigation }) {
           radar?.stop();
           return;
         }
-        // Set devices FIRST, then stop scanning indicator to avoid 'Scan Timeout' flash
         setNearbyDevices(activeSessions.map(session => ({
           id: session._id,
           name: session.subjectName,
@@ -324,16 +296,11 @@ export default function StudentDashboard({ route, navigation }) {
         setIsScanning(false);
         radar?.stop();
       } else {
-        const errData = await res.json().catch(() => ({}));
-        console.error('[SCAN] Server error:', errData);
-        Alert.alert('Server Error', 'Could not reach the class registry.');
         setIsFetchingSessions(false);
         setIsScanning(false);
         radar?.stop();
       }
     } catch (err) {
-      console.error('[fetchActiveSessions] Network Error:', err.message);
-      Alert.alert('Network Error', `Could not connect: ${err.message}`);
       setIsFetchingSessions(false);
       setIsScanning(false);
       radar?.stop();
@@ -344,30 +311,15 @@ export default function StudentDashboard({ route, navigation }) {
     if (radarLoop) radarLoop.stop();
     if (bleManager) bleManager.stopDeviceScan();
     setIsScanning(false);
-
-    // Bio Auth
-    let authResult = { success: false };
+    let authResult = { success: true };
     try {
       const LocalAuthentication = require('expo-local-authentication');
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-
       if (hasHardware && isEnrolled) {
-        authResult = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Verify Identity for Attendance',
-          fallbackLabel: 'Use Passcode',
-        });
-      } else {
-        // Fallback or skip if not available in this environment
-        console.log('Bio-auth not available or not enrolled. Skipping for demo/dev.');
-        authResult = { success: true }; // Allowing for now so they can test the rest
+        authResult = await LocalAuthentication.authenticateAsync({ promptMessage: 'Verify Identity', fallbackLabel: 'Use Passcode' });
       }
-    } catch (e) {
-      console.log('LocalAuthentication error', e);
-      // Fallback for Expo Go or environments without the module
-      Alert.alert('Authentication Skip', 'Biometric module not found. Proceeding without authentication for development.');
-      authResult = { success: true };
-    }
+    } catch (e) { console.log('Auth error', e); }
 
     if (!authResult.success) return;
 
@@ -379,11 +331,9 @@ export default function StudentDashboard({ route, navigation }) {
 
     if (apiRes.ok) {
       setAttendanceMarked(true);
-      setTimeout(() => setShowScanner(false), 2000);
       fetchMyRecords();
     } else {
-      const err = await apiRes.json();
-      Alert.alert('Attendance Failed', err.error || 'Server rejected');
+      Alert.alert('Attendance Failed', 'Server rejected request');
       setShowScanner(false);
     }
   };
@@ -395,26 +345,18 @@ export default function StudentDashboard({ route, navigation }) {
         <DotGrid />
 
         <Animated.View style={[styles.header, { opacity: headerFade }]}>
-          <View>
-            <Text style={styles.greeting}>Good morning 👋</Text>
-            <Text style={styles.studentName}>{profile.name}</Text>
-            <Text style={styles.studentUUID}>{profile.universityRoll} • Year {profile.year} • Sem {profile.semester}</Text>
-          </View>
-          <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.iconBtn} onPress={async () => {
-              await SafeStorage.clear();
-              navigation.replace('Login');
-            }}>
-              <MaterialCommunityIcons name="logout" size={24} color={COLORS.textDark} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.avatarBtn}>
-              <Image source={{ uri: 'https://i.pravatar.cc/150?u=student' }} style={styles.avatar} />
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.greeting}>Hello, {profile?.name?.split(' ')[0] || 'Student'} 👋</Text>
+              <Text style={styles.subtitle}>Ready for class?</Text>
+            </View>
+            <TouchableOpacity style={styles.profileBtn} onPress={() => setShowProfile(true)} activeOpacity={0.8}>
+              <Image source={{ uri: `https://api.dicebear.com/7.x/notionists/png?seed=${email}` }} style={styles.profileImg} />
             </TouchableOpacity>
           </View>
         </Animated.View>
 
         <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]} showsVerticalScrollIndicator={false}>
-
           <View style={styles.ctaContainer}>
             <View style={styles.scanWrapper}>
               {!attendanceMarked && (
@@ -423,10 +365,7 @@ export default function StudentDashboard({ route, navigation }) {
                   <Animated.View style={[styles.glowRing, { transform: [{ scale: pulseAnim2 }], opacity: pulseOpac2 }]} />
                 </>
               )}
-              <Pressable
-                onPress={handleScanInit}
-                style={({ pressed }) => [{ transform: [{ scale: pressed && !attendanceMarked ? 0.94 : 1 }] }]}
-              >
+              <Pressable onPress={handleScanInit} style={({ pressed }) => [{ transform: [{ scale: pressed && !attendanceMarked ? 0.94 : 1 }] }]}>
                 <View style={[styles.scanBtn, attendanceMarked && styles.scanBtnDone]}>
                   <MaterialCommunityIcons name={attendanceMarked ? 'check-decagram' : 'bluetooth-connect'} size={50} color={COLORS.white} />
                   <Text style={styles.scanBtnText}>{attendanceMarked ? 'Marked ✓' : 'Scan'}</Text>
@@ -446,13 +385,8 @@ export default function StudentDashboard({ route, navigation }) {
                   <Text style={styles.mainStatValue}>{stats.attendancePercentage}%</Text>
                   <Text style={styles.statLabel}>Attendance</Text>
                 </View>
-                <View style={styles.trendBadge}>
-                  <MaterialCommunityIcons name="trending-up" size={14} color={COLORS.primaryStart} />
-                  <Text style={styles.trendText}>Up-to-Date</Text>
-                </View>
               </GlassCard>
             </View>
-
             <View style={styles.statsRight}>
               <GlassCard style={styles.miniStatCard}>
                 <View style={[styles.miniIconWrap, { backgroundColor: '#FFE4E6' }]}>
@@ -463,7 +397,6 @@ export default function StudentDashboard({ route, navigation }) {
                   <Text style={styles.miniStatLabel}>Streak</Text>
                 </View>
               </GlassCard>
-
               <GlassCard style={styles.miniStatCard}>
                 <View style={[styles.miniIconWrap, { backgroundColor: '#DBEAFE' }]}>
                   <MaterialCommunityIcons name="file-document-outline" size={24} color={COLORS.accentBlue} />
@@ -484,23 +417,32 @@ export default function StudentDashboard({ route, navigation }) {
                 <TouchableOpacity onPress={handleNextMonth}><MaterialCommunityIcons name="chevron-right" size={24} color={COLORS.textDark} /></TouchableOpacity>
               </View>
             </View>
-
             <View style={styles.calGrid}>
               {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((wd, i) => (<Text key={i} style={styles.calWdLabel}>{wd}</Text>))}
               {calCells.map((d, i) => {
                 const isAttended = d && ATTENDED_DAYS.includes(d);
                 const isMissed = d && MISSED_DAYS.includes(d);
                 const isToday = d === today.getDate() && currentMonth === today.getMonth() && currentYear === today.getFullYear();
-
+                
                 return (
                   <View key={i} style={styles.calCellContainer}>
                     {d && (
-                      <TouchableOpacity
-                        activeOpacity={0.6}
-                        onPress={() => setSelectedDate(d)}
-                        style={[styles.calCell, isAttended && styles.calAttended, isMissed && styles.calMissed, isToday && styles.calToday]}
+                      <TouchableOpacity 
+                        activeOpacity={0.6} 
+                        onPress={() => setSelectedDate(d)} 
+                        style={[
+                          styles.calCell, 
+                          isToday && styles.calToday, 
+                          isMissed && styles.calMissed, 
+                          isAttended && styles.calAttended // Green > Pink
+                        ]}
                       >
-                        <Text style={[styles.calCellText, isAttended && styles.calAttendedTxt, isMissed && styles.calMissedTxt, isToday && styles.calTodayTxt]}>{d}</Text>
+                        <Text style={[
+                          styles.calCellText, 
+                          isToday && styles.calTodayTxt, 
+                          isMissed && styles.calMissedTxt, 
+                          isAttended && styles.calAttendedTxt
+                        ]}>{d}</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -511,35 +453,25 @@ export default function StudentDashboard({ route, navigation }) {
 
           <GlassCard style={styles.subjectsCard}>
             <Text style={styles.subjectsTitle}>Subjects Breakdown</Text>
-            {subjectStats.length === 0 ? (
-              <Text style={{ color: COLORS.textGray, fontSize: 13 }}>No class attendance data yet.</Text>
-            ) : (
-              subjectStats.map((subj, i) => {
-                const maxCount = Math.max(...subjectStats.map(s => s.count), 1);
-                return (
-                  <View key={i} style={styles.subjRow}>
-                    <Text style={styles.subjName}>{subj.name}</Text>
-                    <View style={styles.subjTrack}>
-                      <View style={[styles.subjFill, { width: `${(subj.count / maxCount) * 100}%`, backgroundColor: subj.color }]} />
-                    </View>
-                    <Text style={[styles.subjPct, { color: subj.color }]}>{subj.count}</Text>
-                  </View>
-                );
-              })
-            )}
+            {subjectStats.map((subj, i) => (
+              <View key={i} style={styles.subjRow}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={styles.subjName}>{subj.name}</Text>
+                  <Text style={[styles.subjPct, { color: subj.color }]}>{subj.percentage}%</Text>
+                </View>
+                <View style={styles.subjTrack}><View style={[styles.subjFill, { width: `${subj.percentage}%`, backgroundColor: subj.color }]} /></View>
+              </View>
+            ))}
           </GlassCard>
-
         </ScrollView>
       </View>
 
       <Animated.View pointerEvents={showScanner ? 'auto' : 'none'} style={[styles.scannerSheet, { transform: [{ translateY: sheetY }] }]}>
         <Animated.View style={[styles.sheetBackdrop, { opacity: sheetY.interpolate({ inputRange: [snapPoints.full, snapPoints.half, snapPoints.closed], outputRange: [1, 1, 0], extrapolate: 'clamp' }) }]}>
-          <Pressable style={{ flex: 1 }} onPress={() => !isScanning && setShowScanner(false)} />
+          <Pressable style={{ flex: 1 }} onPress={() => setShowScanner(false)} />
         </Animated.View>
-
         <View style={[styles.scannerContent, { paddingBottom: insets.bottom + 20 }]}>
           <View {...panResponder.panHandlers} style={styles.dragHandleContainer}><View style={styles.dragHandle} /></View>
-
           {!attendanceMarked ? (
             <>
               <View style={styles.scannerHeader}>
@@ -549,70 +481,106 @@ export default function StudentDashboard({ route, navigation }) {
                 </View>
                 <MaterialCommunityIcons name="bluetooth-audio" size={28} color={COLORS.primaryEnd} />
               </View>
-
               <View style={styles.radarContainer}>
                 <Animated.View style={[styles.radarCircle, { transform: [{ scale: radarScale }], opacity: radarOpacity }]} />
-                <Animated.View style={[styles.radarCircle, { transform: [{ scale: radarScale.interpolate({ inputRange: [1, 2.5], outputRange: [1, 2] }) }], opacity: radarOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 0.5] }) }]} />
                 <View style={styles.radarCore}><MaterialCommunityIcons name="antenna" size={32} color={COLORS.primaryEnd} /></View>
               </View>
-
-              {nearbyDevices.length === 0 ? (
-                <View style={styles.emptyDeviceList}>
-                  {(isScanning || isFetchingSessions) ? (
-                    <Text style={styles.scanningText}>Searching for active classes...</Text>
-                  ) : (
-                    <>
-                      <MaterialCommunityIcons name="wifi-off" size={36} color="#CBD5E1" />
-                      <Text style={[styles.scanningText, { marginTop: 10, color: '#94A3B8' }]}>No active classes found.</Text>
-                      <Text style={{ fontSize: 12, color: '#CBD5E1', marginTop: 4 }}>Ask your teacher to start the session.</Text>
-                    </>
-                  )}
-                </View>
-              ) : (
-                <ScrollView style={styles.deviceList} showsVerticalScrollIndicator={false}>
-                  {nearbyDevices.map((device, i) => (
-                    <TouchableOpacity key={i} style={styles.deviceItem} onPress={() => handleDeviceSelect(device)}>
-                      <View style={[styles.deviceIcon, { backgroundColor: '#D1FAE5' }]}><MaterialCommunityIcons name="bluetooth" size={20} color={COLORS.primaryEnd} /></View>
-                      <View style={styles.deviceInfo}>
-                        <Text style={styles.deviceName}>{device.name}</Text>
-                        <Text style={styles.deviceRssi}>Prof. {device.teacher}</Text>
-                      </View>
-                      <MaterialCommunityIcons name="fingerprint" size={24} color={COLORS.primaryEnd} />
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
+              <ScrollView style={styles.deviceList}>
+                {nearbyDevices.map((device, i) => (
+                  <TouchableOpacity key={i} style={styles.deviceItem} onPress={() => handleDeviceSelect(device)}>
+                    <View style={[styles.deviceIcon, { backgroundColor: '#D1FAE5' }]}><MaterialCommunityIcons name="bluetooth" size={20} color={COLORS.primaryEnd} /></View>
+                    <View style={styles.deviceInfo}>
+                      <Text style={styles.deviceName}>{device.name}</Text>
+                      <Text style={styles.deviceRssi}>Prof. {device.teacher}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </>
           ) : (
             <View style={styles.successState}>
-              <View style={styles.successIconWrap}><MaterialCommunityIcons name="check-all" size={60} color={COLORS.white} /></View>
-              <Text style={styles.successTitle}>Verified on Server!</Text>
-              <Text style={styles.successSub}>You are officially marked Present.</Text>
+              <View style={styles.successIconWrap}><MaterialCommunityIcons name="check-decagram" size={60} color="#10B981" /></View>
+              <Text style={styles.successHead}>You're Marked Present!</Text>
+              <Text style={styles.successSub}>Your attendance for the current class is synced.</Text>
+              <TouchableOpacity style={styles.scanBtnSecondary} onPress={() => setAttendanceMarked(false)}>
+                <Text style={styles.scanBtnSecondaryText}>Scan Next Class</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
       </Animated.View>
 
+      <Modal visible={showProfile} transparent animationType="slide">
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowProfile(false)} />
+          <View style={{ backgroundColor: '#FFF', borderTopLeftRadius: 35, borderTopRightRadius: 35, padding: 30, paddingBottom: 50 }}>
+             <View style={{ width: 50, height: 6, backgroundColor: '#E2E8F0', borderRadius: 3, alignSelf: 'center', marginBottom: 25 }} />
+             <View style={{ alignItems: 'center', marginBottom: 30 }}>
+                <Image source={{ uri: `https://api.dicebear.com/7.x/notionists/png?seed=${email}` }} style={{ width: 100, height: 100, borderRadius: 50, marginBottom: 15, backgroundColor: '#F8FAFC' }} />
+                <Text style={{ fontSize: 24, fontWeight: '900', color: '#1E293B' }}>{profile?.name || 'Student'}</Text>
+                <Text style={{ fontSize: 15, color: '#64748B', fontWeight: '500', marginTop: 4 }}>{email}</Text>
+             </View>
+             <View style={{ backgroundColor: '#F8FAFC', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#F1F5F9' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingBottom: 12, marginBottom: 12 }}>
+                   <Text style={{ color: '#64748B', fontWeight: '600' }}>University Roll</Text>
+                   <Text style={{ color: '#1E293B', fontWeight: '800' }}>{profile?.universityRoll}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingBottom: 12, marginBottom: 12 }}>
+                   <Text style={{ color: '#64748B', fontWeight: '600' }}>Year & Sem</Text>
+                   <Text style={{ color: '#1E293B', fontWeight: '800' }}>Year {profile?.year} • Sem {profile?.semester}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                   <Text style={{ color: '#64748B', fontWeight: '600' }}>Class Section</Text>
+                   <Text style={{ color: '#1E293B', fontWeight: '800' }}>Sec {profile?.section}</Text>
+                </View>
+             </View>
+             <TouchableOpacity style={{ backgroundColor: '#FEF2F2', padding: 18, borderRadius: 16, marginTop: 25, alignItems: 'center' }} onPress={() => navigation.replace('Login')}>
+                <Text style={{ color: '#EF4444', fontWeight: '800', fontSize: 16 }}>Sign Out</Text>
+             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Date Info Modal */}
       <Modal visible={!!selectedDate} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSelectedDate(null)} />
-          <View style={[styles.infoModal, { paddingBottom: insets.bottom + 20 }]}>
+          <View style={[styles.infoModal, { paddingBottom: insets.bottom + 30, maxHeight: height * 0.8 }]}>
             <View style={styles.dragHandle} />
             <Text style={styles.infoModalTitle}>{monthName} {selectedDate}, {currentYear}</Text>
-            <GlassCard style={styles.infoCard}>
-              <View style={styles.infoRow}><MaterialCommunityIcons name="clock-outline" size={20} color={COLORS.textGray} /><Text style={styles.infoText}>09:00 AM - 11:00 AM</Text></View>
-              <View style={styles.infoRow}><MaterialCommunityIcons name="book-open-outline" size={20} color={COLORS.textGray} /><Text style={styles.infoText}>Advanced Algorithms (CS304)</Text></View>
-              <View style={styles.infoBadge}>
-                <Text style={styles.infoBadgeText}>{ATTENDED_DAYS.includes(selectedDate) ? 'PRESENT' : MISSED_DAYS.includes(selectedDate) ? 'ABSENT' : 'UPCOMING'}</Text>
-              </View>
-            </GlassCard>
+            
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              {(() => {
+                const dayLogs = history.filter(h => new Date(h.timestamp).getDate() === selectedDate && new Date(h.timestamp).getMonth() === currentMonth);
+                if (dayLogs.length === 0) {
+                  return <Text style={{ color: COLORS.textGray, textAlign: 'center', marginVertical: 40 }}>No sessions attended on this day.</Text>;
+                }
+                return dayLogs.map((log, i) => (
+                  <GlassCard key={i} style={styles.infoCard}>
+                    <View style={styles.infoRow}>
+                      <MaterialCommunityIcons name="clock-outline" size={20} color={COLORS.textGray} />
+                      <Text style={styles.infoText}>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <MaterialCommunityIcons name="book-open-outline" size={20} color={COLORS.textGray} />
+                      <Text style={styles.infoText}>{log.sessionId?.subjectName || 'General Class'}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <MaterialCommunityIcons name="account-tie-outline" size={20} color={COLORS.textGray} />
+                      <Text style={styles.infoText}>Prof. {log.sessionId?.teacherName || 'Unknown'}</Text>
+                    </View>
+                    <View style={styles.infoBadge}><Text style={styles.infoBadgeText}>PRESENT</Text></View>
+                  </GlassCard>
+                ));
+              })()}
+            </ScrollView>
+            
             <TouchableOpacity style={styles.closeModalBtn} activeOpacity={0.8} onPress={() => setSelectedDate(null)}>
               <Text style={styles.closeModalTxt}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
-
     </View>
   );
 }
@@ -621,19 +589,19 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { paddingHorizontal: 20, paddingTop: 10 },
   bentoCard: { borderRadius: 28, backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.05, shadowRadius: 15, elevation: 2, padding: 22 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: 15 },
+  header: { paddingHorizontal: 24, paddingBottom: 15 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   greeting: { fontSize: 13, color: COLORS.textGray, fontWeight: '700' },
-  studentName: { fontSize: 24, fontWeight: '900', color: COLORS.textDark, marginTop: 2, letterSpacing: -0.5 },
-  studentUUID: { fontSize: 13, color: COLORS.textGray, marginTop: 4, fontWeight: '600' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center' },
-  avatarBtn: { width: 48, height: 48, borderRadius: 24, padding: 2, backgroundColor: COLORS.white },
-  avatar: { width: '100%', height: '100%', borderRadius: 22 },
+  subtitle: { fontSize: 24, fontWeight: '900', color: COLORS.textDark, marginTop: 2 },
+  profileBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#F1F5F9' },
+  profileImg: { width: '100%', height: '100%', borderRadius: 24 },
   ctaContainer: { alignItems: 'center', marginVertical: 35 },
   scanWrapper: { width: 140, height: 140, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   scanBtn: { width: 140, height: 140, borderRadius: 70, backgroundColor: COLORS.primaryStart, alignItems: 'center', justifyContent: 'center', shadowColor: COLORS.primaryStart, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.4, shadowRadius: 20, elevation: 12 },
   scanBtnDone: { opacity: 0.9 },
-  scanBtnText: { color: COLORS.white, fontSize: 15, fontWeight: '800', marginTop: 4, letterSpacing: 1 },
+  scanBtnText: { color: '#FFF', fontSize: 18, fontWeight: '800' },
+  scanBtnSecondary: { marginTop: 20, backgroundColor: '#F1F5F9', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 12 },
+  scanBtnSecondaryText: { color: '#3B82F6', fontWeight: '700', fontSize: 15 },
   glowRing: { position: 'absolute', width: 140, height: 140, borderRadius: 70, backgroundColor: COLORS.primaryStart, opacity: 0.5 },
   ctaSub: { fontSize: 14, color: COLORS.textGray, fontWeight: '600' },
   statsLayout: { flexDirection: 'row', gap: 15, marginBottom: 25 },
@@ -659,12 +627,12 @@ const styles = StyleSheet.create({
   calWdLabel: { width: `${100 / 7}%`, textAlign: 'center', fontSize: 13, fontWeight: '800', color: COLORS.textLight, paddingBottom: 20 },
   calCell: { width: '85%', height: '85%', alignItems: 'center', justifyContent: 'center', borderRadius: 100 },
   calCellText: { fontSize: 16, fontWeight: '700', color: COLORS.textDark },
-  calAttended: { backgroundColor: '#D1FAE5' },
-  calAttendedTxt: { color: COLORS.primaryEnd, fontWeight: '800' },
-  calMissed: { backgroundColor: '#FFE4E6' },
-  calMissedTxt: { color: COLORS.accentRed, fontWeight: '800' },
   calToday: { backgroundColor: COLORS.accentBlue, shadowColor: COLORS.accentBlue, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
   calTodayTxt: { color: COLORS.white, fontWeight: '800' },
+  calAttended: { backgroundColor: '#10B981', shadowColor: '#10B981', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 5 },
+  calAttendedTxt: { color: COLORS.white, fontWeight: '800' },
+  calMissed: { backgroundColor: '#FFE4E6' },
+  calMissedTxt: { color: COLORS.accentRed, fontWeight: '800' },
   subjectsCard: { marginBottom: 20 },
   subjectsTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textDark, marginBottom: 18 },
   subjRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
